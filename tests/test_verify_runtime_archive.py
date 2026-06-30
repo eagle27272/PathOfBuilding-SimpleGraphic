@@ -371,6 +371,7 @@ def make_linux_runtime_archive(
     machine=62,
     entry_library="libSimpleGraphic.so",
     lua_modules=POSIX_LUA_MODULES,
+    manifest_system_dependencies=None,
 ):
     archive_root = tmp_path / "archive"
     archive_root.mkdir()
@@ -386,6 +387,8 @@ def make_linux_runtime_archive(
         "entrypoints": REQUIRED_ENTRYPOINTS,
         "luaModules": lua_modules,
     }
+    if manifest_system_dependencies is not None:
+        manifest["systemDependencies"] = manifest_system_dependencies
     (archive_root / entry_library).write_bytes(
         make_elf_x64(REQUIRED_ENTRYPOINTS, dependencies, rpath, machine)
     )
@@ -592,6 +595,39 @@ def test_verify_runtime_archive_accepts_manifest_names_for_unknown_platform(tmp_
 
     assert result.returncode == 0, result.stderr
     assert "Verified" in result.stdout
+
+
+def test_verify_runtime_archive_accepts_declared_future_platform_system_dependency(tmp_path):
+    result = run_verifier(
+        make_linux_runtime_archive(
+            tmp_path,
+            dependencies=("libc.so.7", "libdep.so"),
+            platform="freebsd",
+            architecture="x64",
+            entry_library="SimpleGraphic.native",
+            lua_modules=["lcurl.native", "lua-utf8.native", "socket.native", "lzip.native"],
+            manifest_system_dependencies=["libc.so.7"],
+        )
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "Verified" in result.stdout
+
+
+def test_verify_runtime_archive_rejects_undeclared_future_platform_system_dependency(tmp_path):
+    result = run_verifier(
+        make_linux_runtime_archive(
+            tmp_path,
+            dependencies=("libc.so.7", "libdep.so"),
+            platform="freebsd",
+            architecture="x64",
+            entry_library="SimpleGraphic.native",
+            lua_modules=["lcurl.native", "lua-utf8.native", "socket.native", "lzip.native"],
+        )
+    )
+
+    assert result.returncode != 0
+    assert "depends on libc.so.7, which is not present in the archive" in result.stderr
 
 
 def test_verify_runtime_archive_rejects_wrong_known_platform_entry_library(tmp_path):

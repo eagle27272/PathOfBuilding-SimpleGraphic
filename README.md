@@ -86,6 +86,12 @@ not match the Windows/macOS/Linux defaults, set `SIMPLEGRAPHIC_ENTRY_LIBRARY`,
 `SIMPLEGRAPHIC_SOCKET_MODULE`, and `SIMPLEGRAPHIC_LZIP_MODULE` before running the
 package script. Those values are validated as flat file names and written into
 `SimpleGraphicRuntime.json`.
+If a future platform has native loader dependencies that should come from the
+operating system rather than the archive, set
+`SIMPLEGRAPHIC_SYSTEM_DEPENDENCIES` to a comma- or whitespace-separated list of
+flat library file names. Declared system dependencies are validated, written into
+`SimpleGraphicRuntime.json`, and carried through `SimpleGraphicRuntime-index.json`
+for consumers.
 
 Each `SimpleGraphicRuntime-<platform>-<architecture>` archive has a flat root
 directory. It contains `SimpleGraphicRuntime.json`, the native
@@ -101,7 +107,8 @@ metadata, file ownership list, required Lua modules, the SimpleGraphic entry
 exports, every bundled native binary's architecture, and the native loader paths
 needed for the archive to remain relocatable after it is installed into a
 PathOfBuilding-PoE2 runtime directory. It also rejects macOS metadata sidecar
-files and missing bundled library dependencies with:
+files and missing bundled library dependencies unless those dependencies are
+known platform system libraries or explicitly declared in the archive manifest:
 
 ```sh
 scripts/verify-runtime-archive.py SimpleGraphicRuntime-macos-arm64.tar

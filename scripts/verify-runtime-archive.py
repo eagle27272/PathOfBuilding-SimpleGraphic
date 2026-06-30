@@ -881,12 +881,11 @@ def is_allowed_windows_system_dependency(dependency: str) -> bool:
 def is_system_dependency(
     platform: str, dependency: str, archive_system_dependencies: set[str]
 ) -> bool:
+    name = archive_dependency_name(dependency).lower()
+    if name in archive_system_dependencies:
+        return True
     if platform == "win32":
-        name = archive_dependency_name(dependency).lower()
-        return (
-            name in archive_system_dependencies
-            or is_allowed_windows_system_dependency(dependency)
-        )
+        return is_allowed_windows_system_dependency(dependency)
     if platform == "linux":
         return is_allowed_linux_system_dependency(dependency)
     if platform == "macos":

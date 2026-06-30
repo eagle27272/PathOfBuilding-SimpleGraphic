@@ -562,6 +562,7 @@ def test_write_runtime_index_accepts_future_platform_module_file_names(tmp_path)
         "entryLibrary": "SimpleGraphic.native",
         "entrypoints": sorted(REQUIRED_ENTRYPOINTS),
         "luaModules": modules,
+        "systemDependencies": ["LibC.SO.7", "libthr.so.3"],
         "files": [
             "SimpleGraphicRuntime.json",
             "SimpleGraphic.native",
@@ -597,6 +598,7 @@ def test_write_runtime_index_accepts_future_platform_module_file_names(tmp_path)
     assert entry["target"] == "freebsd-riscv64"
     assert entry["entryLibrary"] == "SimpleGraphic.native"
     assert entry["luaModules"] == modules
+    assert entry["systemDependencies"] == ["libc.so.7", "libthr.so.3"]
 
 
 def test_write_runtime_index_rejects_future_platform_wrong_lua_module_basenames(tmp_path) -> None:

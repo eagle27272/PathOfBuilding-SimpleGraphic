@@ -297,6 +297,24 @@ require_safe_file_name() {
     esac
 }
 
+record_system_dependency() {
+    local dependency="$1"
+    [ -n "$dependency" ] || return 0
+    require_safe_file_name "$dependency"
+    runtime_system_dependencies+=("$(lower_value "$dependency")")
+}
+
+record_declared_system_dependencies() {
+    local raw="$1"
+    local dependency
+
+    raw="${raw//,/ }"
+    raw="${raw//;/ }"
+    for dependency in $raw; do
+        record_system_dependency "$dependency"
+    done
+}
+
 require_runtime_file() {
     [ -f "$install_dir/$1" ] || die "expected runtime file is missing: $1"
 }
@@ -354,7 +372,7 @@ prune_windows_system_runtime_files() {
         file_name="$(basename "$file")"
         if ! is_windows_packaged_dependency "$file_name"; then
             printf 'Removing Windows system runtime dependency %s\n' "$file_name"
-            runtime_system_dependencies+=("$(lower_value "$file_name")")
+            record_system_dependency "$file_name"
             rm -f "$file"
         fi
     done
@@ -451,6 +469,11 @@ print_package_config() {
         "$runtime_lua_utf8_module" \
         "$runtime_socket_module" \
         "$runtime_lzip_module"
+    if [ "${#runtime_system_dependencies[@]}" -gt 0 ]; then
+        printf 'system_dependencies=%s\n' "$(printf '%s\n' "${runtime_system_dependencies[@]}" | sort -u | paste -sd, -)"
+    else
+        printf 'system_dependencies=\n'
+    fi
     printf 'vcpkg_root=%s\n' "$vcpkg_root"
     printf 'generator=%s\n' "$generator"
     printf 'cmake_platform=%s\n' "$cmake_platform"
@@ -541,6 +564,7 @@ require_safe_file_name "$runtime_lcurl_module"
 require_safe_file_name "$runtime_lua_utf8_module"
 require_safe_file_name "$runtime_socket_module"
 require_safe_file_name "$runtime_lzip_module"
+record_declared_system_dependencies "${SIMPLEGRAPHIC_SYSTEM_DEPENDENCIES:-}"
 
 build_type="${SIMPLEGRAPHIC_BUILD_TYPE:-Release}"
 require_safe_build_value "$build_type"

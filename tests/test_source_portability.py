@@ -750,6 +750,30 @@ def test_package_script_dry_run_describes_future_target_with_explicit_triplet(tm
     assert config["lua_modules"] == "lcurl.so,lua-utf8.so,socket.so,lzip.so"
 
 
+def test_package_script_dry_run_records_declared_system_dependencies(tmp_path) -> None:
+    env = os.environ.copy()
+    env["SIMPLEGRAPHIC_DRY_RUN"] = "true"
+    env["SIMPLEGRAPHIC_RUNTIME_TARGET"] = "freebsd-riscv64"
+    env["SIMPLEGRAPHIC_VCPKG_TRIPLET"] = "riscv64-freebsd"
+    env["SIMPLEGRAPHIC_ENTRY_LIBRARY"] = "SimpleGraphic.native"
+    env["SIMPLEGRAPHIC_LUA_MODULE_EXT"] = ".native"
+    env["SIMPLEGRAPHIC_SYSTEM_DEPENDENCIES"] = "LibC.SO.7, libthr.so.3"
+    result = subprocess.run(
+        ["bash", str(REPO_ROOT / "scripts" / "package-runtime.sh")],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    config = _parse_key_value_output(result.stdout)
+    assert result.stderr == ""
+    assert config["runtime_target"] == "freebsd-riscv64"
+    assert config["entry_library"] == "SimpleGraphic.native"
+    assert config["lua_modules"] == "lcurl.native,lua-utf8.native,socket.native,lzip.native"
+    assert config["system_dependencies"] == "libc.so.7,libthr.so.3"
+
+
 def test_package_script_dry_run_describes_cmake_generator_settings(tmp_path) -> None:
     env = os.environ.copy()
     env["SIMPLEGRAPHIC_DRY_RUN"] = "on"

@@ -233,6 +233,27 @@ def require_manifest_flat_file_list(manifest: dict, path: pathlib.Path, key: str
     return names
 
 
+def require_manifest_system_dependencies(manifest: dict, path: pathlib.Path) -> list[str]:
+    value = manifest.get("systemDependencies")
+    if value is None:
+        return []
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        fail(f"{path.name} manifest field 'systemDependencies' must be a string list")
+
+    dependencies: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        dependency = pathlib.PurePosixPath(item)
+        if "\\" in item or dependency.is_absolute() or len(dependency.parts) != 1 or dependency.name in (".", ".."):
+            fail(f"{path.name} manifest field 'systemDependencies' must contain flat file names: {item}")
+        name = dependency.name.lower()
+        if name in seen:
+            fail(f"{path.name} manifest field 'systemDependencies' contains duplicate entry {name!r}")
+        seen.add(name)
+        dependencies.append(name)
+    return sorted(dependencies)
+
+
 def lua_module_basename(module: str) -> str:
     return module.split(".", 1)[0]
 
@@ -332,6 +353,7 @@ def runtime_archive_entry(path: pathlib.Path) -> dict:
 
     entrypoints = require_manifest_entrypoints(manifest, path)
     lua_modules = require_manifest_lua_modules(manifest, path, platform)
+    system_dependencies = require_manifest_system_dependencies(manifest, path)
     missing_required_files = ({entry_library, *lua_modules, MANIFEST_NAME} - regular_files)
     if missing_required_files:
         fail(
@@ -339,7 +361,7 @@ def runtime_archive_entry(path: pathlib.Path) -> dict:
             f"{', '.join(sorted(missing_required_files))}"
         )
 
-    return {
+    entry = {
         "fileName": path.name,
         "target": target,
         "platform": platform,
@@ -353,6 +375,9 @@ def runtime_archive_entry(path: pathlib.Path) -> dict:
         "size": path.stat().st_size,
         "sha256": sha256_file(path),
     }
+    if system_dependencies:
+        entry["systemDependencies"] = system_dependencies
+    return entry
 
 
 def archive_checksum_entry(path: pathlib.Path, mode: str, target: str, platform: str, architecture: str) -> dict:
