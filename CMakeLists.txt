@@ -1,7 +1,11 @@
-cmake_minimum_required(VERSION 3.15)
+cmake_minimum_required(VERSION 3.21)
 project(SimpleGraphic C CXX)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+option(SIMPLEGRAPHIC_USE_BUNDLED_VCPKG "Use the bundled vcpkg checkout when no toolchain has already configured vcpkg." ${PROJECT_IS_TOP_LEVEL})
+option(SIMPLEGRAPHIC_INSTALL_RUNTIME_DEPENDENCIES "Install shared-library runtime dependencies next to SimpleGraphic." ON)
 
 if (APPLE)
     enable_language(OBJCXX)
@@ -14,7 +18,49 @@ endif ()
 
 list(APPEND CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake")
 
-include(${PROJECT_SOURCE_DIR}/vcpkg/scripts/buildsystems/vcpkg.cmake)
+if (SIMPLEGRAPHIC_USE_BUNDLED_VCPKG
+        AND NOT DEFINED VCPKG_INSTALLED_DIR
+        AND EXISTS "${PROJECT_SOURCE_DIR}/vcpkg/scripts/buildsystems/vcpkg.cmake")
+    include("${PROJECT_SOURCE_DIR}/vcpkg/scripts/buildsystems/vcpkg.cmake")
+endif ()
+
+set(SIMPLEGRAPHIC_INSTALL_RPATH)
+if (APPLE)
+    set(SIMPLEGRAPHIC_INSTALL_RPATH "@loader_path")
+elseif (UNIX)
+    set(SIMPLEGRAPHIC_INSTALL_RPATH "$ORIGIN")
+endif ()
+
+function(simplegraphic_apply_shared_defaults target_name)
+    if (SIMPLEGRAPHIC_INSTALL_RPATH)
+        set_target_properties(${target_name} PROPERTIES
+            INSTALL_RPATH "${SIMPLEGRAPHIC_INSTALL_RPATH}"
+        )
+    endif ()
+endfunction()
+
+function(simplegraphic_apply_lua_module_defaults target_name output_name)
+    simplegraphic_apply_shared_defaults(${target_name})
+    set_target_properties(${target_name} PROPERTIES
+        OUTPUT_NAME "${output_name}"
+        PREFIX ""
+    )
+endfunction()
+
+function(simplegraphic_install_target target_name)
+    if (SIMPLEGRAPHIC_INSTALL_RUNTIME_DEPENDENCIES)
+        install(TARGETS ${target_name}
+            RUNTIME_DEPENDENCY_SET SimpleGraphicRuntimeDependencies
+            RUNTIME DESTINATION "."
+            LIBRARY DESTINATION "."
+        )
+    else ()
+        install(TARGETS ${target_name}
+            RUNTIME DESTINATION "."
+            LIBRARY DESTINATION "."
+        )
+    endif ()
+endfunction()
 
 set(CMAKE_INSTALL_SYSTEM_RUNTIME_DESTINATION ".")
 include(InstallRequiredSystemLibraries)
@@ -76,20 +122,20 @@ set(SIMPLEGRAPHIC_SOURCES
     "ui_subscript.h"
 )
 
-set (SIMPLEGRAPHIC_PLATFORM_SOURCES)
+set(SIMPLEGRAPHIC_PLATFORM_SOURCES)
 if (APPLE)
-    set (SIMPLEGRAPHIC_PLATFORM_SOURCES
+    list(APPEND SIMPLEGRAPHIC_PLATFORM_SOURCES
         "engine/system/win/sys_macos.mm"
     )
 endif()
 
 if (WIN32)
-    set (SIMPLEGRAPHIC_PLATFORM_SOURCES
+    list(APPEND SIMPLEGRAPHIC_PLATFORM_SOURCES
         "engine/system/win/sys_console.cpp"
         "SimpleGraphic.rc"
     )
 else()
-    set (SIMPLEGRAPHIC_PLATFORM_SOURCES
+    list(APPEND SIMPLEGRAPHIC_PLATFORM_SOURCES
         "engine/system/win/sys_console_unix.cpp"
     )
 endif()
@@ -98,6 +144,7 @@ add_library(SimpleGraphic SHARED
     ${SIMPLEGRAPHIC_SOURCES}
     ${SIMPLEGRAPHIC_PLATFORM_SOURCES}
 )
+simplegraphic_apply_shared_defaults(SimpleGraphic)
 target_compile_definitions(SimpleGraphic
     PRIVATE
     "UNICODE"
@@ -129,7 +176,17 @@ find_package(sol2 CONFIG REQUIRED)
 find_package(Threads REQUIRED)
 find_package(zstd REQUIRED)
 find_package(ZLIB REQUIRED)
-find_package(WebP)
+find_package(WebP REQUIRED)
+
+if (TARGET zstd::libzstd_shared)
+    set(SIMPLEGRAPHIC_ZSTD_TARGET zstd::libzstd_shared)
+elseif (TARGET zstd::libzstd_static)
+    set(SIMPLEGRAPHIC_ZSTD_TARGET zstd::libzstd_static)
+elseif (TARGET zstd::libzstd)
+    set(SIMPLEGRAPHIC_ZSTD_TARGET zstd::libzstd)
+else ()
+    message(FATAL_ERROR "Could not find a usable zstd CMake target.")
+endif ()
 
 add_library(cmp_core STATIC
     dep/compressonator/cmp_core/source/cmp_core.cpp
@@ -197,10 +254,12 @@ if (CMAKE_SYSTEM_NAME MATCHES "Linux")
 endif ()
 
 if (WIN32)
-    target_compile_options(SimpleGraphic
-        PRIVATE
-        "/EHa"
-    )
+    if (MSVC)
+        target_compile_options(SimpleGraphic
+            PRIVATE
+            "/EHa"
+        )
+    endif ()
     target_compile_definitions(SimpleGraphic
         PRIVATE
         "_CRT_SECURE_NO_DEPRECATE=1"
@@ -208,10 +267,17 @@ if (WIN32)
         "_SCL_SECURE_NO_DEPRECATE=1"
         "_SCL_SECURE_NO_WARNINGS=1"
     )
-    target_link_libraries(SimpleGraphic
-        PRIVATE
-        "winmm.lib"
-    )
+    if (MSVC)
+        target_link_libraries(SimpleGraphic
+            PRIVATE
+            "winmm.lib"
+        )
+    else ()
+        target_link_libraries(SimpleGraphic
+            PRIVATE
+            winmm
+        )
+    endif ()
 endif ()
 
 if (APPLE)
@@ -240,11 +306,10 @@ target_link_libraries(SimpleGraphic
     Threads::Threads
     WebP::webpdecoder
     ZLIB::ZLIB
-    zstd::libzstd_shared
+    ${SIMPLEGRAPHIC_ZSTD_TARGET}
 )
 
-install(FILES $<TARGET_RUNTIME_DLLS:SimpleGraphic> DESTINATION ".")
-install(TARGETS SimpleGraphic RUNTIME DESTINATION ".")
+simplegraphic_install_target(SimpleGraphic)
 
 if (WIN32)
     set(DEPS_DIR "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}")
@@ -281,7 +346,8 @@ endif ()
 
 set(LCURL_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/libs/Lua-cURLv3)
 file(GLOB LCURL_SOURCES ${LCURL_SOURCE_DIR}/src/**.c)
-add_library(lcurl SHARED ${LCURL_SOURCES})
+add_library(lcurl MODULE ${LCURL_SOURCES})
+simplegraphic_apply_lua_module_defaults(lcurl lcurl)
 
 target_include_directories(lcurl
     PRIVATE
@@ -294,17 +360,25 @@ target_link_libraries(lcurl
     LuaJIT::LuaJIT
 )
 
-install(TARGETS lcurl RUNTIME DESTINATION ".")
-install(FILES $<TARGET_RUNTIME_DLLS:lcurl> DESTINATION ".")
+simplegraphic_install_target(lcurl)
 
 # luautf8 module
 
-add_library(lua-utf8 SHARED libs/luautf8/lutf8lib.c)
+add_library(lua-utf8 MODULE libs/luautf8/lutf8lib.c)
+simplegraphic_apply_lua_module_defaults(lua-utf8 lua-utf8)
 
-target_compile_definitions(lua-utf8
-    PRIVATE
-    LUA_BUILD_AS_DLL
-)
+if (WIN32)
+    target_compile_definitions(lua-utf8
+        PRIVATE
+        LUA_BUILD_AS_DLL
+    )
+endif ()
+if (NOT MSVC)
+    target_compile_options(lua-utf8
+        PRIVATE
+        -include limits.h
+    )
+endif ()
 
 target_include_directories(lua-utf8
     PRIVATE
@@ -315,12 +389,11 @@ target_link_libraries(lua-utf8
     LuaJIT::LuaJIT
 )
 
-install(TARGETS lua-utf8 RUNTIME DESTINATION ".")
-install(FILES $<TARGET_RUNTIME_DLLS:lua-utf8> DESTINATION ".")
+simplegraphic_install_target(lua-utf8)
 
 # luasocket module
 
-add_library(luasocket SHARED
+set(LUASOCKET_SOURCES
    "libs/luasocket/src/auxiliar.c"
    "libs/luasocket/src/buffer.c"
    "libs/luasocket/src/compat.c"
@@ -333,28 +406,41 @@ add_library(luasocket SHARED
    "libs/luasocket/src/tcp.c"
    "libs/luasocket/src/timeout.c"
    "libs/luasocket/src/udp.c"
-   "libs/luasocket/src/wsocket.c"
 )
+
+if (WIN32)
+    list(APPEND LUASOCKET_SOURCES "libs/luasocket/src/wsocket.c")
+else ()
+    list(APPEND LUASOCKET_SOURCES "libs/luasocket/src/usocket.c")
+endif ()
+
+add_library(luasocket MODULE ${LUASOCKET_SOURCES})
+simplegraphic_apply_lua_module_defaults(luasocket socket)
 
 target_include_directories(luasocket
     PRIVATE
-    ${LSOCKET_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/libs/luasocket/src
 )
 
 target_link_libraries(luasocket
     PRIVATE
     LuaJIT::LuaJIT
-    wsock32
-    ws2_32
 )
 
-set_target_properties( luasocket PROPERTIES OUTPUT_NAME "socket" ) 
-install(TARGETS luasocket RUNTIME DESTINATION ".")
-install(FILES $<TARGET_RUNTIME_DLLS:luasocket> DESTINATION ".")
+if (WIN32)
+    target_link_libraries(luasocket
+        PRIVATE
+        wsock32
+        ws2_32
+    )
+endif ()
+
+simplegraphic_install_target(luasocket)
 
 # lzip module
 
-add_library(lzip SHARED libs/LZip/lzip.cpp)
+add_library(lzip MODULE libs/LZip/lzip.cpp)
+simplegraphic_apply_lua_module_defaults(lzip lzip)
 
 target_include_directories(lzip
     PRIVATE
@@ -366,5 +452,22 @@ target_link_libraries(lzip
     ZLIB::ZLIB
 )
 
-install(TARGETS lzip RUNTIME DESTINATION ".")
-install(FILES $<TARGET_RUNTIME_DLLS:lzip> DESTINATION ".")
+simplegraphic_install_target(lzip)
+
+if (SIMPLEGRAPHIC_INSTALL_RUNTIME_DEPENDENCIES)
+    install(RUNTIME_DEPENDENCY_SET SimpleGraphicRuntimeDependencies
+        DESTINATION "."
+        PRE_EXCLUDE_REGEXES
+            [[api-ms-.*]]
+            [[ext-ms-.*]]
+        POST_EXCLUDE_REGEXES
+            [[.*[\\/]Windows[\\/]System32[\\/].*]]
+            [[.*[\\/]Windows[\\/]SysWOW64[\\/].*]]
+            [[.*[\\/]Windows[\\/]WinSxS[\\/].*]]
+            [[^/System/Library/.*]]
+            [[^/usr/lib/.*]]
+            [[^/usr/lib64/.*]]
+            [[^/lib/.*]]
+            [[^/lib64/.*]]
+    )
+endif ()

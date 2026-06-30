@@ -1,116 +1,398 @@
-name: Build DLL
-on: 
+name: Build Runtime
+
+on:
+  workflow_dispatch:
+    inputs:
+      runtime_target:
+        description: Optional custom <platform>-<architecture> target; leave empty to build the release matrix
+        required: false
+        default: ''
+      vcpkg_triplet:
+        description: vcpkg target triplet for a custom runtime target
+        required: false
+        default: ''
+      runner:
+        description: Runner label for a custom runtime target
+        required: false
+        default: ubuntu-24.04
+      cmake_generator:
+        description: Optional CMake generator for a custom runtime target
+        required: false
+        default: ''
+      cmake_platform:
+        description: Optional CMake platform, such as x64 or ARM64
+        required: false
+        default: ''
+      cmake_osx_architectures:
+        description: Optional CMAKE_OSX_ARCHITECTURES value for custom macOS targets
+        required: false
+        default: ''
   push:
   pull_request:
   release:
-      types: [published]
+    types: [published]
+
+permissions:
+  contents: write
+
 jobs:
-  build_dll:
+  build_runtime:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.runtime_target == '' }}
     strategy:
+      fail-fast: false
       matrix:
         include:
-          - platform: x64
-            os: windows-latest
-            triplet: x64-windows
+          - target: win32-x64
+            os: windows-2025
+            triplet: x64-windows-release
+            generator: Visual Studio 17 2022
+            cmake_platform: x64
+          - target: win32-arm64
+            os: windows-11-arm
+            triplet: arm64-windows
+            generator: Visual Studio 17 2022
+            cmake_platform: ARM64
+          - target: linux-x64
+            os: ubuntu-24.04
+            triplet: x64-linux-dynamic
+            generator: Unix Makefiles
+            cmake_platform: ''
+          - target: linux-arm64
+            os: ubuntu-24.04-arm
+            triplet: arm64-linux-dynamic
+            generator: Unix Makefiles
+            cmake_platform: ''
+          - target: macos-x64
+            os: macos-15-intel
+            triplet: x64-osx-dynamic
+            generator: Unix Makefiles
+            cmake_platform: ''
+          - target: macos-arm64
+            os: macos-15
+            triplet: arm64-osx-dynamic
+            generator: Unix Makefiles
+            cmake_platform: ''
     runs-on: ${{ matrix.os }}
     env:
-      VCPKG_DEFAULT_TRIPLET: ${{ matrix.triplet }}-release
-      VCPKG_TARGET_TRIPLET: ${{ matrix.triplet }}-release
-      VCPKG_INSTALLED_DIR: ${{ github.workspace }}/vcpkg_installed/
+      VCPKG_DEFAULT_TRIPLET: ${{ matrix.triplet }}
+      VCPKG_TARGET_TRIPLET: ${{ matrix.triplet }}
+      VCPKG_INSTALLED_DIR: ${{ github.workspace }}/vcpkg_installed
       DEPS_DIR: ${{ github.workspace }}/vcpkg_installed/${{ matrix.triplet }}
       INST_DIR: ${{ github.workspace }}/install-prefix
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           submodules: "recursive"
 
-      - name: Append short commit sha to CFG_VERSION_NUM in config.h
-        shell: powershell
+      - name: Install Linux build prerequisites
+        if: ${{ runner.os == 'Linux' }}
         run: |
-          $file = 'config.h'
-          $short=$(git rev-parse --short HEAD)
-          (Get-Content $file -Raw) -replace '(#define\s+CFG_VERSION_NUM\s+"[^"]*)(")', "`$1-$short`$2" | Set-Content $file
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgl1-mesa-dev \
+            libwayland-dev \
+            libx11-dev \
+            libx11-xcb-dev \
+            libxcursor-dev \
+            libxext-dev \
+            libxi-dev \
+            libxinerama-dev \
+            libxkbcommon-dev \
+            libxrandr-dev \
+            mesa-common-dev \
+            pkg-config \
+            python3-venv \
+            wayland-protocols
 
-      - name: run-vcpkg
-        uses: lukka/run-vcpkg@v11
-        with:
-          vcpkgJsonGlob: "./vcpkg.json"
-          runVcpkgInstall: true
+      - name: Install macOS build prerequisites
+        if: ${{ runner.os == 'macOS' }}
+        run: brew install pkg-config
+
+      - name: Append short commit sha to CFG_VERSION_NUM in config.h
+        shell: bash
+        run: |
+          short_sha="$(git rev-parse --short HEAD)"
+          export SHORT_SHA="$short_sha"
+          if command -v python3 >/dev/null 2>&1; then
+            py=python3
+          else
+            py=python
+          fi
+          "$py" - <<'PY'
+          import os
+          import pathlib
+          import re
+
+          path = pathlib.Path("config.h")
+          data = path.read_text(encoding="utf-8")
+          short = os.environ["SHORT_SHA"]
+          data = re.sub(r'(#define\s+CFG_VERSION_NUM\s+"[^"]*)(")', rf'\1-{short}\2', data, count=1)
+          path.write_text(data, encoding="utf-8")
+          PY
 
       - name: Setup MSBuild
+        if: ${{ runner.os == 'Windows' }}
         uses: microsoft/setup-msbuild@v2
 
-      - name: Obtain and run CMake
-        uses: threeal/cmake-action@v1.3.0
-        with:
-          source-dir: "."
-          build-dir: "build"
-          generator: "Visual Studio 17 2022"
-          options: CMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake CMAKE_INSTALL_PREFIX="${{ env.INST_DIR }}" VCPKG_TARGET_TRIPLET="${{ env.VCPKG_TARGET_TRIPLET }}"
+      - name: Show package configuration
+        shell: bash
+        env:
+          SIMPLEGRAPHIC_DRY_RUN: "1"
+          SIMPLEGRAPHIC_RUNTIME_TARGET: ${{ matrix.target }}
+          SIMPLEGRAPHIC_VCPKG_TRIPLET: ${{ matrix.triplet }}
+          SIMPLEGRAPHIC_CMAKE_GENERATOR: ${{ matrix.generator }}
+          SIMPLEGRAPHIC_CMAKE_PLATFORM: ${{ matrix.cmake_platform }}
+          SIMPLEGRAPHIC_BUILD_DIR: ${{ github.workspace }}/build
+          SIMPLEGRAPHIC_INSTALL_DIR: ${{ env.INST_DIR }}
+          SIMPLEGRAPHIC_ARCHIVE_DIR: ${{ github.workspace }}
+        run: scripts/package-runtime.sh
 
-      - name: Build DLL
-        run: "cmake --build build --config Release -t INSTALL"
+      - name: Package runtime
+        shell: bash
+        env:
+          SIMPLEGRAPHIC_RUNTIME_TARGET: ${{ matrix.target }}
+          SIMPLEGRAPHIC_VCPKG_TRIPLET: ${{ matrix.triplet }}
+          SIMPLEGRAPHIC_CMAKE_GENERATOR: ${{ matrix.generator }}
+          SIMPLEGRAPHIC_CMAKE_PLATFORM: ${{ matrix.cmake_platform }}
+          SIMPLEGRAPHIC_BUILD_DIR: ${{ github.workspace }}/build
+          SIMPLEGRAPHIC_INSTALL_DIR: ${{ env.INST_DIR }}
+          SIMPLEGRAPHIC_ARCHIVE_DIR: ${{ github.workspace }}
+        run: scripts/package-runtime.sh
 
-      - name: Show DLL resources
+      - name: Smoke runtime entrypoint
+        shell: bash
+        run: |
+          if command -v python3 >/dev/null 2>&1; then
+            py=python3
+          else
+            py=python
+          fi
+          "$py" scripts/smoke-runtime-archive.py "SimpleGraphicRuntime-${{ matrix.target }}.tar"
+
+      - name: Show Windows DLL resources
+        if: ${{ runner.os == 'Windows' }}
+        shell: powershell
         run: |
           $dll = "install-prefix\SimpleGraphic.dll"
           Write-Host "DLL path: $dll"
           if (Test-Path $dll) {
-            Write-Host "VersionInfo:"; (Get-Item $dll).VersionInfo | Format-List
-          } else { Write-Host "DLL not found" }
+            Write-Host "VersionInfo:"
+            (Get-Item $dll).VersionInfo | Format-List
+          } else {
+            Write-Host "DLL not found"
+          }
 
-      - name: Archive DLL
+      - name: Archive runtime
         uses: actions/upload-artifact@v4
         with:
-          name: SimpleGraphic-${{ matrix.triplet }}.dll
-          path: "${{ env.INST_DIR }}/SimpleGraphic.dll"
+          name: SimpleGraphicRuntime-${{ matrix.target }}
+          path: SimpleGraphicRuntime-${{ matrix.target }}.tar
 
-      - name: Archive DLL symbols
+      - name: Archive legacy Windows runtime
+        if: ${{ matrix.target == 'win32-x64' }}
         uses: actions/upload-artifact@v4
         with:
-          name: SimpleGraphic-${{ matrix.triplet }}.pdb
-          path: "${{ github.workspace }}/build/Release/SimpleGraphic.pdb"
+          name: SimpleGraphicDLLs-x64-windows
+          path: SimpleGraphicDLLs-x64-windows.tar
 
-      - name: Archive dependency DLLs
+      - name: Archive Windows symbols
+        if: ${{ runner.os == 'Windows' }}
         uses: actions/upload-artifact@v4
         with:
-          name: SimpleGraphic-${{ matrix.triplet }}-deps.dll
+          name: SimpleGraphicRuntime-${{ matrix.target }}-pdb
           path: |
-            ${{ env.INST_DIR }}/*.dll
-            !${{ env.INST_DIR }}/SimpleGraphic.dll
-
-      - name: Archive dependency DLL symbols
-        uses: actions/upload-artifact@v4
-        with:
-          name: SimpleGraphic-${{ matrix.triplet }}-deps.pdb
-          path: |
+            ${{ github.workspace }}/build/Release/*.pdb
             ${{ env.DEPS_DIR }}/bin/*.pdb
-            ${{ github.workspace }}/build/Release/lzip.pdb
-            ${{ github.workspace }}/build/Release/lcurl.pdb
 
-      - name: Upload to release
-        if: ${{ github.event_name == 'release' }}
+  validate_runtime:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.runtime_target == '' }}
+    needs: build_runtime
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download runtime artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: runtime-artifacts
+          pattern: SimpleGraphic*
+          merge-multiple: true
+
+      - name: Verify runtime archive contract
+        shell: bash
+        run: scripts/validate-runtime-artifacts.sh runtime-artifacts
+
+      - name: Archive runtime index
+        uses: actions/upload-artifact@v4
+        with:
+          name: SimpleGraphicRuntime-index
+          path: runtime-artifacts/SimpleGraphicRuntime-index.json
+
+  build_custom_runtime:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.runtime_target != '' }}
+    runs-on: ${{ inputs.runner }}
+    env:
+      VCPKG_DEFAULT_TRIPLET: ${{ inputs.vcpkg_triplet }}
+      VCPKG_TARGET_TRIPLET: ${{ inputs.vcpkg_triplet }}
+      VCPKG_INSTALLED_DIR: ${{ github.workspace }}/vcpkg_installed
+      INST_DIR: ${{ github.workspace }}/install-prefix
+      SIMPLEGRAPHIC_RUNTIME_TARGET: ${{ inputs.runtime_target }}
+      SIMPLEGRAPHIC_VCPKG_TRIPLET: ${{ inputs.vcpkg_triplet }}
+      SIMPLEGRAPHIC_CMAKE_GENERATOR: ${{ inputs.cmake_generator }}
+      SIMPLEGRAPHIC_CMAKE_PLATFORM: ${{ inputs.cmake_platform }}
+      SIMPLEGRAPHIC_CMAKE_OSX_ARCHITECTURES: ${{ inputs.cmake_osx_architectures }}
+      SIMPLEGRAPHIC_BUILD_DIR: ${{ github.workspace }}/build
+      SIMPLEGRAPHIC_INSTALL_DIR: ${{ github.workspace }}/install-prefix
+      SIMPLEGRAPHIC_ARCHIVE_DIR: ${{ github.workspace }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: "recursive"
+
+      - name: Install Linux build prerequisites
+        if: ${{ runner.os == 'Linux' }}
         run: |
-          cd ${{ env.INST_DIR }}
-          tar -cvf SimpleGraphicDLLs-${{ matrix.triplet }}.tar *.dll
-          gh release upload ${{ github.event.release.tag_name }} SimpleGraphicDLLs-${{ matrix.triplet }}.tar
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgl1-mesa-dev \
+            libwayland-dev \
+            libx11-dev \
+            libx11-xcb-dev \
+            libxcursor-dev \
+            libxext-dev \
+            libxi-dev \
+            libxinerama-dev \
+            libxkbcommon-dev \
+            libxrandr-dev \
+            mesa-common-dev \
+            pkg-config \
+            python3-venv \
+            wayland-protocols
 
+      - name: Install macOS build prerequisites
+        if: ${{ runner.os == 'macOS' }}
+        run: brew install pkg-config
+
+      - name: Append short commit sha to CFG_VERSION_NUM in config.h
+        shell: bash
+        run: |
+          short_sha="$(git rev-parse --short HEAD)"
+          export SHORT_SHA="$short_sha"
+          if command -v python3 >/dev/null 2>&1; then
+            py=python3
+          else
+            py=python
+          fi
+          "$py" - <<'PY'
+          import os
+          import pathlib
+          import re
+
+          path = pathlib.Path("config.h")
+          data = path.read_text(encoding="utf-8")
+          short = os.environ["SHORT_SHA"]
+          data = re.sub(r'(#define\s+CFG_VERSION_NUM\s+"[^"]*)(")', rf'\1-{short}\2', data, count=1)
+          path.write_text(data, encoding="utf-8")
+          PY
+
+      - name: Setup MSBuild
+        if: ${{ runner.os == 'Windows' }}
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Show package configuration
+        shell: bash
+        env:
+          SIMPLEGRAPHIC_DRY_RUN: "1"
+        run: scripts/package-runtime.sh
+
+      - name: Package custom runtime
+        shell: bash
+        run: scripts/package-runtime.sh
+
+      - name: Validate custom runtime artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          target="$(
+            SIMPLEGRAPHIC_DRY_RUN=1 scripts/package-runtime.sh |
+              awk -F= '$1 == "runtime_target" { print $2 }'
+          )"
+          test -n "$target"
+          mkdir -p runtime-artifacts
+          cp SimpleGraphicRuntime-*.tar runtime-artifacts/
+          SIMPLEGRAPHIC_EXPECTED_RUNTIME_TARGETS="$target" \
+            SIMPLEGRAPHIC_REQUIRE_LEGACY_WINDOWS_ARCHIVE=0 \
+            scripts/validate-runtime-artifacts.sh runtime-artifacts
+
+      - name: Smoke custom runtime entrypoint
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v python3 >/dev/null 2>&1; then
+            py=python3
+          else
+            py=python
+          fi
+          archive="$(find runtime-artifacts -maxdepth 1 -name 'SimpleGraphicRuntime-*.tar' -print | sort | head -n 1)"
+          test -n "$archive"
+          "$py" scripts/smoke-runtime-archive.py "$archive"
+
+      - name: Archive custom runtime
+        uses: actions/upload-artifact@v4
+        with:
+          name: SimpleGraphicRuntime-custom
+          path: |
+            runtime-artifacts/SimpleGraphicRuntime-*.tar
+            runtime-artifacts/SimpleGraphicRuntime-index.json
+
+  publish_runtime:
+    if: ${{ github.event_name == 'release' }}
+    needs: validate_runtime
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Download runtime artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+          pattern: SimpleGraphic*
+          merge-multiple: true
+
+      - name: Upload runtime archives to release
+        shell: bash
+        run: |
+          set -euo pipefail
+          for archive in release-artifacts/SimpleGraphicRuntime-*.tar; do
+            gh release upload "${{ github.event.release.tag_name }}" "$archive" --clobber
+          done
+          gh release upload "${{ github.event.release.tag_name }}" \
+            release-artifacts/SimpleGraphicRuntime-index.json --clobber
+          gh release upload "${{ github.event.release.tag_name }}" \
+            release-artifacts/SimpleGraphicDLLs-x64-windows.tar --clobber
+
+  notify_consumers:
+    if: ${{ github.event_name == 'release' }}
+    needs: publish_runtime
+    runs-on: ubuntu-24.04
+    steps:
       - name: Notify PathOfBuilding repo
-        if: ${{ github.event_name == 'release' }}
         uses: peter-evans/repository-dispatch@v3
         with:
           token: ${{ secrets.WIRES77_PAT }}
-          repository: ${{ github.repository_owner }}/PathOfBuilding
+          repository: eagle27272/PathOfBuilding
           event-type: update-simple-graphic
-          client-payload: '{"tag": "${{ github.event.release.tag_name }}", "release_link": "${{ github.event.release.html_url }}"}'
+          client-payload: '{"tag": "${{ github.event.release.tag_name }}", "release_link": "${{ github.event.release.html_url }}", "release_repo": "${{ github.repository }}", "runtime_index": "SimpleGraphicRuntime-index.json"}'
 
       - name: Notify PathOfBuilding-PoE2 repo
-        if: ${{ github.event_name == 'release' }}
         uses: peter-evans/repository-dispatch@v3
         with:
           token: ${{ secrets.WIRES77_PAT }}
-          repository: ${{ github.repository_owner }}/PathOfBuilding-PoE2
+          repository: eagle27272/PathOfBuilding-PoE2
           event-type: update-simple-graphic
-          client-payload: '{"tag": "${{ github.event.release.tag_name }}", "release_link": "${{ github.event.release.html_url }}"}'
+          client-payload: '{"tag": "${{ github.event.release.tag_name }}", "release_link": "${{ github.event.release.html_url }}", "release_repo": "${{ github.repository }}", "runtime_index": "SimpleGraphicRuntime-index.json"}'

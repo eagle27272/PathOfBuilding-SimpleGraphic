@@ -42,7 +42,7 @@ char* AllocStringLen(int len)
 
 void FreeString(char* st)
 {
-	if (st) delete st;
+	if (st) delete[] st;
 }
 
 // =============
@@ -193,7 +193,7 @@ fs_inflator_c::fs_inflator_c(fs_fileInfo_s* info)
 	FillInput();
 
 	// Start decompressor
-	inflateInit2(zst, -MAX_WBITS);	
+	inflateInit2(zst, -MAX_WBITS);
 }
 
 fs_inflator_c::~fs_inflator_c()
@@ -211,7 +211,7 @@ void fs_inflator_c::FillInput()
 	// Relocate any remaining input
 	int remin = zst->avail_in;
 	if (remin) {
-		memcpy(ibuf, zst->next_in, remin); 
+		memcpy(ibuf, zst->next_in, remin);
 	}
 
 	// Get reading amount
@@ -224,7 +224,7 @@ void fs_inflator_c::FillInput()
 	// Read into buffer
 	if (rd) {
 		fseek(i->f, i->fo + pC, SEEK_SET);
-		fread(ibuf + remin, rd, 1, i->f);
+		rd = fread(ibuf + remin, 1, rd, i->f);
 	}
 
 	// Update stream
@@ -244,7 +244,7 @@ int fs_inflator_c::Inflate(byte* out, int len)
 		int r = inflate(zst, Z_SYNC_FLUSH);
 
 		switch (r) {
-		case Z_OK:	
+		case Z_OK:
 			// Progress made, check if we're done
 			if (zst->avail_out == 0) {
 				return len;
@@ -297,7 +297,7 @@ fs_file_c::fs_file_c(fs_fileInfo_s* info)
 	} else {
 		inf = NULL;
 	}
-	
+
 	// Set position
 	pU = 0;
 }
@@ -447,7 +447,11 @@ fs_zipFile_c::fs_zipFile_c(const char* zname)
 		if (lh.szName) {
 			// Read filename
 			char* fname = AllocStringLen(lh.szName);
-			fread(fname, lh.szName, 1, zf); 
+			if (fread(fname, 1, lh.szName, zf) != lh.szName) {
+				FreeString(fname);
+				fclose(zf);
+				return;
+			}
 
 			// Add it in if it is a file
 			if (fname[lh.szName-1] != '/') {
@@ -468,7 +472,7 @@ fs_zipFile_c::fs_zipFile_c(const char* zname)
 			} else {
 				FreeString(fname);
 			}
-			
+
 			// Skip the extra information and file data
 			fseek(zf, lh.szExtra + lh.szComp, SEEK_CUR);
 		}

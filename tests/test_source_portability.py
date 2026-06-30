@@ -1,0 +1,560 @@
+import os
+import pathlib
+import re
+import stat
+import subprocess
+
+
+REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
+
+
+def _write_executable(path: pathlib.Path, contents: str) -> None:
+    path.write_text(contents, encoding="utf-8")
+    path.chmod(path.stat().st_mode | stat.S_IXUSR)
+
+
+def _parse_key_value_output(output: str) -> dict[str, str]:
+    return dict(line.split("=", 1) for line in output.splitlines() if "=" in line)
+
+
+def test_runtime_architecture_detection_matches_packaging_architectures() -> None:
+    source = (REPO_ROOT / "engine/system/win/sys_main.cpp").read_text(encoding="utf-8")
+
+    for architecture in (
+        "arm64ec",
+        "x64",
+        "x86",
+        "arm64",
+        "armv7",
+        "armv6",
+        "arm",
+        "riscv64",
+        "riscv32",
+        "loongarch64",
+        "loongarch32",
+        "ppc64le",
+        "ppc64",
+        "ppc",
+        "mips64",
+        "mips",
+        "s390x",
+        "s390",
+    ):
+        assert f'return "{architecture}";' in source
+
+
+def test_runtime_base_path_has_generic_posix_fallback() -> None:
+    source = (REPO_ROOT / "engine/system/win/sys_main.cpp").read_text(encoding="utf-8")
+
+    assert "if (progPath.empty())" in source
+    assert "std::filesystem::current_path()" in source
+
+
+def test_runtime_uses_native_user_data_paths_per_platform() -> None:
+    source = (REPO_ROOT / "engine/system/win/sys_main.cpp").read_text(encoding="utf-8")
+
+    assert 'Library/Application Support' in source
+    assert 'XDG_DATA_HOME' in source
+    assert '.local/share' in source
+    assert 'Could not determine home directory for macOS user data path' in source
+    assert 'Could not determine home directory for user data path' in source
+    assert 'if (pw && pw->pw_dir && *pw->pw_dir)' in source
+    assert 'std::make_tuple(std::optional<std::filesystem::path>{}' in source
+
+
+def test_linux_vasprintf_results_are_checked() -> None:
+    sys_source = (REPO_ROOT / "engine/system" / "win" / "sys_main.cpp").read_text(encoding="utf-8")
+    console_source = (REPO_ROOT / "engine" / "common" / "console.cpp").read_text(encoding="utf-8")
+
+    assert "int msgLen = vasprintf(&msg, fmt, va)" in sys_source
+    assert "msgLen >= 0 && msg" in sys_source
+    assert "int textLen = vasprintf(&text, fmt, va)" in console_source
+    assert "textLen >= 0 && text" in console_source
+    assert "int cmdLen = vasprintf(&cmd, fmt, va)" in console_source
+    assert "cmdLen >= 0 && cmd" in console_source
+
+
+def test_posix_process_launch_detaches_without_leaving_launcher_zombies() -> None:
+    source = (REPO_ROOT / "engine/system/win/sys_main.cpp").read_text(encoding="utf-8")
+
+    assert "WaitForDetachedLauncher" in source
+    assert "waitpid(pid, &status, 0)" in source
+    assert "errno != EINTR" in source
+    assert "setsid() == -1" in source
+    assert "pid_t child = fork()" in source
+    assert "_exit(child < 0 ? 127 : 0)" in source
+    assert 'execl("/bin/sh", "sh", "-c", command.c_str(), (char*)nullptr)' in source
+
+
+def test_posix_open_url_uses_generic_launcher_override() -> None:
+    source = (REPO_ROOT / "engine/system/win/sys_main.cpp").read_text(encoding="utf-8")
+
+    assert 'getenv("SIMPLEGRAPHIC_OPEN_URL_COMMAND")' in source
+    assert 'urlLauncher = "xdg-open"' in source
+    assert "execlp(urlLauncher, urlLauncher, url, (char*)nullptr)" in source
+    assert 'fmt::format("Could not launch {}.", urlLauncher)' in source
+    assert "#elif defined(__APPLE__) && defined(__MACH__)" in source
+    assert "const char* PlatformOpenURL(const char* url);" in source
+
+
+def test_package_script_accepts_future_macos_architecture_spelling() -> None:
+    source = (REPO_ROOT / "scripts/package-runtime.sh").read_text(encoding="utf-8")
+
+    assert 'SIMPLEGRAPHIC_CMAKE_OSX_ARCHITECTURES' in source
+    assert 'printf \'%s\' "$1"' in source
+
+
+def test_package_script_can_describe_future_platform_runtime_file_names() -> None:
+    source = (REPO_ROOT / "scripts/package-runtime.sh").read_text(encoding="utf-8")
+
+    for variable in (
+        "SIMPLEGRAPHIC_ENTRY_LIBRARY",
+        "SIMPLEGRAPHIC_LUA_MODULE_EXT",
+        "SIMPLEGRAPHIC_LCURL_MODULE",
+        "SIMPLEGRAPHIC_LUA_UTF8_MODULE",
+        "SIMPLEGRAPHIC_SOCKET_MODULE",
+        "SIMPLEGRAPHIC_LZIP_MODULE",
+    ):
+        assert variable in source
+
+    assert 'require_safe_file_name "$runtime_entry_library"' in source
+    assert '"entryLibrary": "$runtime_entry_library"' in source
+    assert '"$runtime_lcurl_module"' in source
+
+
+def test_package_script_manifest_lists_expected_lua_modules_once() -> None:
+    source = (REPO_ROOT / "scripts/package-runtime.sh").read_text(encoding="utf-8")
+    match = re.search(r'"luaModules": \[\n(?P<body>.*?)\n  \]', source, re.DOTALL)
+
+    assert match is not None
+    module_lines = [
+        line.strip().rstrip(",")
+        for line in match.group("body").splitlines()
+        if line.strip()
+    ]
+
+    assert module_lines == [
+        '"$runtime_lcurl_module"',
+        '"$runtime_lua_utf8_module"',
+        '"$runtime_socket_module"',
+        '"$runtime_lzip_module"',
+    ]
+
+
+def test_package_script_uses_host_runnable_vcpkg_binary() -> None:
+    source = (REPO_ROOT / "scripts/package-runtime.sh").read_text(encoding="utf-8")
+
+    assert "SIMPLEGRAPHIC_VCPKG_ROOT" in source
+    assert "windows_path()" in source
+    assert "cygpath -w" in source
+    assert 'cmd.exe /d /c call "$(windows_path "$vcpkg_root/bootstrap-vcpkg.bat")"' in source
+    assert "vcpkg_binary_is_usable()" in source
+    assert '"$candidate" version >/dev/null 2>&1' in source
+    assert "-DCMAKE_TOOLCHAIN_FILE=\"$vcpkg_root/scripts/buildsystems/vcpkg.cmake\"" in source
+    assert "vcpkg bootstrap did not produce a runnable host binary" in source
+
+
+def test_package_script_clears_mounted_install_directory_contents() -> None:
+    source = (REPO_ROOT / "scripts/package-runtime.sh").read_text(encoding="utf-8")
+
+    assert "reset_directory_contents()" in source
+    assert 'mkdir -p "$directory"' in source
+    assert 'find "$directory" -mindepth 1 -maxdepth 1 -exec rm -rf {} +' in source
+    assert 'reset_directory_contents "$install_dir"' in source
+    assert 'rm -rf "$install_dir"' not in source
+
+
+def test_package_script_rejects_dot_prefixed_target_components(tmp_path) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _write_executable(
+        bin_dir / "uname",
+        "#!/bin/sh\n"
+        "if [ \"${1:-}\" = \"-s\" ]; then\n"
+        "  printf 'MINGW64_NT-10.0\\n'\n"
+        "else\n"
+        "  printf 'x86_64\\n'\n"
+        "fi\n",
+    )
+    _write_executable(bin_dir / "cmake", "#!/bin/sh\nexit 0\n")
+    _write_executable(bin_dir / "tar", "#!/bin/sh\nexit 0\n")
+
+    env = os.environ.copy()
+    env["PATH"] = f"{bin_dir}{os.pathsep}{env['PATH']}"
+    env["SIMPLEGRAPHIC_RUNTIME_TARGET"] = "win32-.hidden"
+    result = subprocess.run(
+        ["bash", str(REPO_ROOT / "scripts" / "package-runtime.sh")],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    assert "unsafe runtime target component: .hidden" in result.stderr
+
+
+def test_package_script_rejects_multi_hyphen_target_alias(tmp_path) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _write_executable(
+        bin_dir / "uname",
+        "#!/bin/sh\n"
+        "if [ \"${1:-}\" = \"-s\" ]; then\n"
+        "  printf 'MINGW64_NT-10.0\\n'\n"
+        "else\n"
+        "  printf 'x86_64\\n'\n"
+        "fi\n",
+    )
+    _write_executable(bin_dir / "cmake", "#!/bin/sh\nexit 0\n")
+    _write_executable(bin_dir / "tar", "#!/bin/sh\nexit 0\n")
+
+    env = os.environ.copy()
+    env["PATH"] = f"{bin_dir}{os.pathsep}{env['PATH']}"
+    env["SIMPLEGRAPHIC_RUNTIME_TARGET"] = "linux-gnu-x64"
+    result = subprocess.run(
+        ["bash", str(REPO_ROOT / "scripts" / "package-runtime.sh")],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    assert "SIMPLEGRAPHIC_RUNTIME_TARGET must be a two-part" in result.stderr
+
+
+def test_package_script_normalizes_armhf_to_armv7_target(tmp_path) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _write_executable(
+        bin_dir / "uname",
+        "#!/bin/sh\n"
+        "if [ \"${1:-}\" = \"-s\" ]; then\n"
+        "  printf 'MINGW64_NT-10.0\\n'\n"
+        "else\n"
+        "  printf 'x86_64\\n'\n"
+        "fi\n",
+    )
+    _write_executable(bin_dir / "cmake", "#!/bin/sh\nexit 0\n")
+    _write_executable(bin_dir / "tar", "#!/bin/sh\nexit 0\n")
+
+    env = os.environ.copy()
+    env["PATH"] = f"{bin_dir}{os.pathsep}{env['PATH']}"
+    env["SIMPLEGRAPHIC_RUNTIME_TARGET"] = "linux-armhf"
+    result = subprocess.run(
+        ["bash", str(REPO_ROOT / "scripts" / "package-runtime.sh")],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    assert "no default vcpkg triplet for linux-armv7" in result.stderr
+
+
+def test_package_script_accepts_architecture_first_target_alias(tmp_path) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _write_executable(
+        bin_dir / "uname",
+        "#!/bin/sh\n"
+        "if [ \"${1:-}\" = \"-s\" ]; then\n"
+        "  printf 'MINGW64_NT-10.0\\n'\n"
+        "else\n"
+        "  printf 'x86_64\\n'\n"
+        "fi\n",
+    )
+    _write_executable(bin_dir / "cmake", "#!/bin/sh\nexit 1\n")
+    _write_executable(bin_dir / "tar", "#!/bin/sh\nexit 0\n")
+    vcpkg_root = tmp_path / "vcpkg"
+    vcpkg_root.mkdir()
+    _write_executable(vcpkg_root / "vcpkg", "#!/bin/sh\nprintf 'fake vcpkg\\n'\n")
+
+    env = os.environ.copy()
+    env["PATH"] = f"{bin_dir}{os.pathsep}{env['PATH']}"
+    env["SIMPLEGRAPHIC_RUNTIME_TARGET"] = "amd64-linux"
+    env["SIMPLEGRAPHIC_VCPKG_ROOT"] = str(vcpkg_root)
+    result = subprocess.run(
+        ["bash", str(REPO_ROOT / "scripts" / "package-runtime.sh")],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    assert "Packaging SimpleGraphic runtime linux-x64 with vcpkg triplet x64-linux-dynamic" in result.stdout
+
+
+def test_package_script_bootstraps_vcpkg_with_windows_converted_path(tmp_path) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    calls = tmp_path / "calls.log"
+    vcpkg_root = tmp_path / "vcpkg"
+    vcpkg_root.mkdir()
+    (vcpkg_root / "bootstrap-vcpkg.bat").write_text("@echo off\n", encoding="utf-8")
+    _write_executable(
+        bin_dir / "uname",
+        "#!/bin/sh\n"
+        "if [ \"${1:-}\" = \"-s\" ]; then\n"
+        "  printf 'MINGW64_NT-10.0\\n'\n"
+        "else\n"
+        "  printf 'AMD64\\n'\n"
+        "fi\n",
+    )
+    _write_executable(
+        bin_dir / "cygpath",
+        "#!/bin/sh\n"
+        "if [ \"${1:-}\" = \"-w\" ]; then\n"
+        "  shift\n"
+        "fi\n"
+        "printf 'C:\\\\repo\\\\vcpkg\\\\bootstrap-vcpkg.bat\\n'\n",
+    )
+    _write_executable(
+        bin_dir / "cmd.exe",
+        "#!/bin/sh\n"
+        f"printf '%s\\n' \"$*\" > {calls}\n"
+        f"cat > {vcpkg_root / 'vcpkg.exe'} <<'EOF'\n"
+        "#!/bin/sh\n"
+        "printf 'fake vcpkg\\n'\n"
+        "EOF\n"
+        f"chmod +x {vcpkg_root / 'vcpkg.exe'}\n",
+    )
+    _write_executable(
+        bin_dir / "cmake",
+        "#!/bin/sh\n"
+        "case \"$1\" in\n"
+        "  --build|--install) exit 0 ;;\n"
+        "  *) exit 0 ;;\n"
+        "esac\n",
+    )
+    _write_executable(bin_dir / "tar", "#!/bin/sh\nexit 1\n")
+
+    env = os.environ.copy()
+    env["PATH"] = f"{bin_dir}{os.pathsep}{env['PATH']}"
+    env["SIMPLEGRAPHIC_RUNTIME_TARGET"] = "win32-x64"
+    env["SIMPLEGRAPHIC_VCPKG_ROOT"] = str(vcpkg_root)
+    result = subprocess.run(
+        ["bash", str(REPO_ROOT / "scripts" / "package-runtime.sh")],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    assert calls.read_text(encoding="utf-8").strip() == "/d /c call C:\\repo\\vcpkg\\bootstrap-vcpkg.bat"
+    assert "expected runtime file is missing: SimpleGraphic.dll" in result.stderr
+
+
+def test_package_script_writes_windows_manifest_and_legacy_archive(tmp_path) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    calls = tmp_path / "calls.log"
+    install_dir = tmp_path / "install"
+    archive_dir = tmp_path / "archives"
+    vcpkg_root = tmp_path / "vcpkg"
+    vcpkg_root.mkdir()
+    _write_executable(
+        vcpkg_root / "vcpkg.exe",
+        "#!/bin/sh\n"
+        "printf 'fake vcpkg\\n'\n",
+    )
+    _write_executable(
+        bin_dir / "uname",
+        "#!/bin/sh\n"
+        "if [ \"${1:-}\" = \"-s\" ]; then\n"
+        "  printf 'MINGW64_NT-10.0\\n'\n"
+        "else\n"
+        "  printf 'AMD64\\n'\n"
+        "fi\n",
+    )
+    _write_executable(
+        bin_dir / "cmake",
+        "#!/bin/sh\n"
+        "if [ \"${1:-}\" = \"--install\" ]; then\n"
+        "  mkdir -p \"$SIMPLEGRAPHIC_INSTALL_DIR\"\n"
+        "  for file in SimpleGraphic.dll lcurl.dll lua-utf8.dll socket.dll lzip.dll zlib1.dll lua51.dll; do\n"
+        "    printf 'fake %s\\n' \"$file\" > \"$SIMPLEGRAPHIC_INSTALL_DIR/$file\"\n"
+        "  done\n"
+        "fi\n",
+    )
+    _write_executable(
+        bin_dir / "tar",
+        "#!/bin/sh\n"
+        f"printf 'tar %s\\n' \"$*\" >> {calls}\n"
+        "while [ \"$#\" -gt 0 ]; do\n"
+        "  if [ \"$1\" = \"-cvf\" ]; then\n"
+        "    shift\n"
+        "    mkdir -p \"$(dirname \"$1\")\"\n"
+        "    printf 'fake archive\\n' > \"$1\"\n"
+        "    exit 0\n"
+        "  fi\n"
+        "  shift || true\n"
+        "done\n"
+        "exit 1\n",
+    )
+    _write_executable(
+        bin_dir / "python3",
+        "#!/bin/sh\n"
+        "case \"$1\" in\n"
+        "  */verify-runtime-archive.py) exit 0 ;;\n"
+        "  *) exit 0 ;;\n"
+        "esac\n",
+    )
+
+    env = os.environ.copy()
+    env["PATH"] = f"{bin_dir}{os.pathsep}{env['PATH']}"
+    env["SIMPLEGRAPHIC_RUNTIME_TARGET"] = "amd64-windows"
+    env["SIMPLEGRAPHIC_VCPKG_ROOT"] = str(vcpkg_root)
+    env["SIMPLEGRAPHIC_INSTALL_DIR"] = str(install_dir)
+    env["SIMPLEGRAPHIC_ARCHIVE_DIR"] = str(archive_dir)
+    result = subprocess.run(
+        ["bash", str(REPO_ROOT / "scripts" / "package-runtime.sh")],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    manifest = (install_dir / "SimpleGraphicRuntime.json").read_text(encoding="utf-8")
+    tar_calls = calls.read_text(encoding="utf-8")
+    assert '"target": "win32-x64"' in manifest
+    assert '"platform": "win32"' in manifest
+    assert '"architecture": "x64"' in manifest
+    assert '"entryLibrary": "SimpleGraphic.dll"' in manifest
+    assert '"lcurl.dll"' in manifest
+    assert '"lua-utf8.dll"' in manifest
+    assert '"socket.dll"' in manifest
+    assert '"lzip.dll"' in manifest
+    assert (archive_dir / "SimpleGraphicRuntime-win32-x64.tar").is_file()
+    assert (archive_dir / "SimpleGraphicDLLs-x64-windows.tar").is_file()
+    assert "SimpleGraphicRuntime-win32-x64.tar" in tar_calls
+    assert "SimpleGraphicDLLs-x64-windows.tar" in tar_calls
+    assert "./SimpleGraphic.dll" in tar_calls
+    assert "./lcurl.dll" in tar_calls
+    assert "./lua-utf8.dll" in tar_calls
+    assert "./socket.dll" in tar_calls
+    assert "./lzip.dll" in tar_calls
+    assert "Wrote" in result.stdout
+
+
+def test_package_script_dry_run_describes_windows_alias_without_build_tools(tmp_path) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _write_executable(bin_dir / "cmake", "#!/bin/sh\nprintf 'cmake should not run\\n' >&2\nexit 44\n")
+    _write_executable(bin_dir / "tar", "#!/bin/sh\nprintf 'tar should not run\\n' >&2\nexit 45\n")
+
+    env = os.environ.copy()
+    env["PATH"] = f"{bin_dir}{os.pathsep}{env['PATH']}"
+    env["SIMPLEGRAPHIC_DRY_RUN"] = "1"
+    env["SIMPLEGRAPHIC_RUNTIME_TARGET"] = "amd64-windows"
+    result = subprocess.run(
+        ["bash", str(REPO_ROOT / "scripts" / "package-runtime.sh")],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    config = _parse_key_value_output(result.stdout)
+    assert result.stderr == ""
+    assert config["runtime_target"] == "win32-x64"
+    assert config["runtime_platform"] == "win32"
+    assert config["runtime_architecture"] == "x64"
+    assert config["triplet"] == "x64-windows-release"
+    assert config["entry_library"] == "SimpleGraphic.dll"
+    assert config["lua_modules"] == "lcurl.dll,lua-utf8.dll,socket.dll,lzip.dll"
+    assert config["archive"].endswith("/SimpleGraphicRuntime-win32-x64.tar")
+
+
+def test_package_script_dry_run_describes_future_target_with_explicit_triplet(tmp_path) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _write_executable(bin_dir / "cmake", "#!/bin/sh\nprintf 'cmake should not run\\n' >&2\nexit 44\n")
+    _write_executable(bin_dir / "tar", "#!/bin/sh\nprintf 'tar should not run\\n' >&2\nexit 45\n")
+
+    env = os.environ.copy()
+    env["PATH"] = f"{bin_dir}{os.pathsep}{env['PATH']}"
+    env["SIMPLEGRAPHIC_DRY_RUN"] = "true"
+    env["SIMPLEGRAPHIC_RUNTIME_TARGET"] = "linux-riscv64"
+    env["SIMPLEGRAPHIC_VCPKG_TRIPLET"] = "riscv64-linux-dynamic"
+    result = subprocess.run(
+        ["bash", str(REPO_ROOT / "scripts" / "package-runtime.sh")],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    config = _parse_key_value_output(result.stdout)
+    assert result.stderr == ""
+    assert config["runtime_target"] == "linux-riscv64"
+    assert config["runtime_platform"] == "linux"
+    assert config["runtime_architecture"] == "riscv64"
+    assert config["triplet"] == "riscv64-linux-dynamic"
+    assert config["entry_library"] == "libSimpleGraphic.so"
+    assert config["lua_modules"] == "lcurl.so,lua-utf8.so,socket.so,lzip.so"
+
+
+def test_package_script_dry_run_describes_cmake_generator_settings(tmp_path) -> None:
+    env = os.environ.copy()
+    env["SIMPLEGRAPHIC_DRY_RUN"] = "on"
+    env["SIMPLEGRAPHIC_RUNTIME_TARGET"] = "arm64-windows"
+    env["SIMPLEGRAPHIC_CMAKE_GENERATOR"] = "Visual Studio 17 2022"
+    env["SIMPLEGRAPHIC_CMAKE_PLATFORM"] = "ARM64"
+    result = subprocess.run(
+        ["bash", str(REPO_ROOT / "scripts" / "package-runtime.sh")],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    config = _parse_key_value_output(result.stdout)
+    assert config["runtime_target"] == "win32-arm64"
+    assert config["triplet"] == "arm64-windows"
+    assert config["generator"] == "Visual Studio 17 2022"
+    assert config["cmake_platform"] == "ARM64"
+
+
+def test_package_script_dry_run_still_rejects_unsafe_targets(tmp_path) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _write_executable(bin_dir / "cmake", "#!/bin/sh\nprintf 'cmake should not run\\n' >&2\nexit 44\n")
+
+    env = os.environ.copy()
+    env["PATH"] = f"{bin_dir}{os.pathsep}{env['PATH']}"
+    env["SIMPLEGRAPHIC_DRY_RUN"] = "1"
+    env["SIMPLEGRAPHIC_RUNTIME_TARGET"] = "linux-gnu-x64"
+    result = subprocess.run(
+        ["bash", str(REPO_ROOT / "scripts" / "package-runtime.sh")],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    assert "SIMPLEGRAPHIC_RUNTIME_TARGET must be a two-part" in result.stderr
+    assert "cmake should not run" not in result.stderr
+
+
+def test_lzip_checks_short_archive_reads() -> None:
+    source = (REPO_ROOT / "libs/LZip/lzip.cpp").read_text(encoding="utf-8")
+
+    assert "rd = fread(ibuf + remin, 1, rd, i->f)" in source
+    assert "if (fread(fname, 1, lh.szName, zf) != lh.szName)" in source
+    assert "FreeString(fname)" in source
+
+
+def test_cmake_excludes_common_system_library_locations_from_runtime_archives() -> None:
+    source = (REPO_ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
+
+    for pattern in (
+        r"[[.*[\\/]Windows[\\/]System32[\\/].*]]",
+        r"[[.*[\\/]Windows[\\/]SysWOW64[\\/].*]]",
+        r"[[.*[\\/]Windows[\\/]WinSxS[\\/].*]]",
+        "[[^/System/Library/.*]]",
+        "[[^/usr/lib/.*]]",
+        "[[^/usr/lib64/.*]]",
+        "[[^/lib/.*]]",
+        "[[^/lib64/.*]]",
+    ):
+        assert pattern in source

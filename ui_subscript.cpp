@@ -6,6 +6,8 @@
 
 #include "ui_local.h"
 
+#include <cstdio>
+
 // =======
 // Classes
 // =======
@@ -420,7 +422,7 @@ void ui_subscript_c::SubScriptFrame()
 				for (int i = retStart; i <= n; i++) {
 					if ( !(lua_isnil(ui->L, i) || lua_isboolean(ui->L, i) || lua_isnumber(ui->L, i) || lua_isstring(ui->L, i)) ) {
 						char* msg = AllocStringLen(128);
-						sprintf(msg, "OnSubCall() return %d: only nil, boolean, number and string can be returned to sub script", i - retStart + 1);
+						snprintf(msg, 129, "OnSubCall() return %d: only nil, boolean, number and string can be returned to sub script", i - retStart + 1);
 						ui->DoError("Runtime error in", msg);
 						FreeString(msg);
 						doRet = false;
@@ -457,7 +459,7 @@ void ui_subscript_c::SubScriptFrame()
 				for (int i = 2; i <= n; i++) {
 					if ( !(lua_isnil(L, i) || lua_isboolean(L, i) || lua_isnumber(L, i) || lua_isstring(L, i)) ) {
 						char* msg = AllocStringLen(128);
-						sprintf(msg, "Subscript return %d: only nil, boolean, number and string can be returned from sub script", i - 1);
+						snprintf(msg, 129, "Subscript return %d: only nil, boolean, number and string can be returned from sub script", i - 1);
 						ui->DoError("Runtime error in", msg);
 						FreeString(msg);
 						lua_settop(L, 1);

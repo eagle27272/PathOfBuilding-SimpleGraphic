@@ -1,5 +1,7 @@
 #include "core_compress.h"
 
+#include <cstring>
+
 std::optional<std::vector<char>> CompressZstandard(gsl::span<const std::byte> src, std::optional<int> level)
 {
 	if (!level)

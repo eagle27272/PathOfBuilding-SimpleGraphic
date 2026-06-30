@@ -10,6 +10,7 @@
 #include <fstream>
 #include <zlib.h>
 #include <cmath>
+#include <cstdlib>
 
 #include "core/core_tex_manipulation.h"
 
@@ -126,7 +127,7 @@ static ui_main_c* GetUIPtr(lua_State* L)
 * any C++ objects. To support RAII this scaffolding serves as a landing pad for
 * ui->LExpect, to transfer control to Lua but only after the call stack has been
 * unwound with normal C++ exception semantics.
-* 
+*
 * Example use site:
 * SG_LUA_CPP_FUN_BEGIN(DoTheThing)
 * {
@@ -142,13 +143,14 @@ static ui_main_c* GetUIPtr(lua_State* L)
 #ifdef _WIN32
 #define SG_NOINLINE __declspec(noinline)
 #else
-#define SG_NOINLINE [[gnu::noinline]]
+#define SG_NOINLINE __attribute__((noinline))
 #endif
 #define SG_NORETURN [[noreturn]]
 
 SG_NORETURN static void LuaErrorWrapper(lua_State* L)
 {
 	lua_error(L);
+	std::abort();
 }
 
 #define SG_LUA_CPP_FUN_BEGIN(Name)                                 \
@@ -652,7 +654,7 @@ SG_LUA_CPP_FUN_BEGIN(imgHandleLoadArtArcBand)
 					break;
 				}
 			}
-			
+
 			// If no pixel was found to be inside, the row does not contribute.
 			if (colLo == -1)
 				continue;
@@ -861,7 +863,7 @@ static int l_SetDrawColor(lua_State* L)
 		}
 	}
 	ui->renderer->DrawColor(color);
-		
+
 	// Store last applied color from renderer
 	col4_t finalColor;
 	ui->renderer->GetDrawColor(finalColor);
@@ -869,7 +871,7 @@ static int l_SetDrawColor(lua_State* L)
 	ui->lastColor[1] = finalColor[1];
 	ui->lastColor[2] = finalColor[2];
 	ui->lastColor[3] = finalColor[3];
-		
+
 	return 0;
 }
 
@@ -1022,7 +1024,7 @@ static int l_DrawImageQuad(lua_State* L)
 	glm::vec2 xys[4]{}, uvs[4]{};
 	int stackLayer = 0;
 	std::optional<int> maskLayer{};
-	
+
 	// | n  |img| corners | uvs | stack | mask |
 	// | 9  | X | X       |	    |       |      |
 	// | 10 | X | X       |     | X     |      |
@@ -2172,16 +2174,38 @@ int ui_main_c::InitAPI(lua_State* L)
 	sol::state_view lua(L);
 	luaL_openlibs(L);
 
-	// Add "lua/" subdir for non-JIT Lua
+	// Keep Lua modules loadable from the flat native runtime install.
 	{
+#ifdef _WIN32
+		char const* luaModuleExt = ".dll";
+#else
+		char const* luaModuleExt = ".so";
+#endif
 		lua_getglobal(L, "package");
-		char const* tn = lua_typename(L, -1);
+
 		lua_getfield(L, -1, "path");
-		std::string old_path = lua_tostring(L, -1);
+		char const* path = lua_tostring(L, -1);
+		std::string old_path = path ? path : "";
 		lua_pop(L, 1);
-		old_path += ";lua/?.lua";
+		old_path += ";lua/?.lua;lua/?/init.lua;./?.lua;./?/init.lua";
 		lua_pushstring(L, old_path.c_str());
 		lua_setfield(L, -2, "path");
+
+		lua_getfield(L, -1, "cpath");
+		char const* cpath = lua_tostring(L, -1);
+		std::string old_cpath = cpath ? cpath : "";
+		lua_pop(L, 1);
+		old_cpath += ";?";
+		old_cpath += luaModuleExt;
+		old_cpath += ";./?";
+		old_cpath += luaModuleExt;
+		old_cpath += ";lua/?";
+		old_cpath += luaModuleExt;
+		old_cpath += ";./lua/?";
+		old_cpath += luaModuleExt;
+		lua_pushstring(L, old_cpath.c_str());
+		lua_setfield(L, -2, "cpath");
+
 		lua_pop(L, 1);
 	}
 
@@ -2243,7 +2267,7 @@ int ui_main_c::InitAPI(lua_State* L)
 	textureType["Save"] = &Texture_c::Save;
 	textureType["Info"] = &Texture_c::Info;
 	textureType["IsValid"] = &Texture_c::IsValid;
-	
+
 	//textureType["SetLayer"] = &Texture_c::SetLayer;
 	//textureType["CopyImage"] = &Texture_c::CopyImage;
 	//textureType["Transcode"] = &Texture_c::Transcode;

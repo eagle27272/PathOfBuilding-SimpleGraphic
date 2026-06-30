@@ -6,6 +6,8 @@
 
 #include "ui_local.h"
 
+#include <cstdio>
+
 // ======
 // Locals
 // ======
@@ -177,8 +179,9 @@ void ui_main_c::PCall(int narg, int nret)
 void ui_main_c::DoError(const char* msg, const char* error)
 {
 	auto scriptStr = scriptName.generic_u8string();
-	char* errText = AllocStringLen(strlen(msg) + scriptStr.size() + strlen(error) + 30);
-	sprintf(errText, "--- SCRIPT ERROR ---\n%s '%s':\n%s\n", msg, scriptStr.c_str(), error);
+	size_t errTextLen = strlen(msg) + scriptStr.size() + strlen(error) + 30;
+	char* errText = AllocStringLen(errTextLen);
+	snprintf(errText, errTextLen + 1, "--- SCRIPT ERROR ---\n%s '%s':\n%s\n", msg, scriptStr.c_str(), error);
 	sys->Exit(errText);
 	FreeString(errText);
 	didExit = true;

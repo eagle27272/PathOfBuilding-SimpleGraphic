@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdio>
 #include <filesystem>
 #include <fmt/chrono.h>
 #include <future>
@@ -563,12 +564,12 @@ struct AdjacentMergeStrategy : RenderStrategy {
 		}
 	}
 
-	void Flush() {
+	void Flush() override {
 		if (!batch_.batch.vertices.empty()) {
 			Dispatch();
 		}
 		if (showStats_) {
-			ImGui::BulletText("Layer %d:%d - %d batches", layer_->layer, layer_->subLayer, batchIndex);
+			ImGui::BulletText("Layer %d:%d - %zu batches", layer_->layer, layer_->subLayer, batchIndex);
 		}
 	}
 
@@ -585,8 +586,8 @@ private:
 		auto& lastKey = lastDispatchKey_;
 
 		if (showStats_) {
-			ImGui::Text("Batch %d", batchIndex);
-			ImGui::Text("%d verts", batch.vertices.size());
+			ImGui::Text("Batch %zu", batchIndex);
+			ImGui::Text("%zu verts", batch.vertices.size());
 		}
 
 		{
@@ -1032,7 +1033,7 @@ void r_renderer_c::Init(r_featureFlag_e features)
 		}
 		glGenFramebuffers(1, &rtt.framebuffer);
 		glGenTextures(1, &rtt.colorTexture);
-		
+
 		if (i == 0) {
 			auto compileShader = [](std::string_view src, GLenum type) -> GLuint {
 				GLuint id = glCreateShader(type);
@@ -1305,14 +1306,14 @@ void r_renderer_c::EndFrame()
 		for (int l = 0; l < numLayer; l++) {
 			totalCmd += layerSort[l]->numCmd;
 			char str[1024];
-			sprintf(str, "%zu (%4d,%4d) [%2d]", layerSort[l]->numCmd, layerSort[l]->layer, layerSort[l]->subLayer, l);
+			snprintf(str, sizeof(str), "%zu (%4d,%4d) [%2d]", layerSort[l]->numCmd, layerSort[l]->layer, layerSort[l]->subLayer, l);
 			float w = (float)DrawStringWidth(16, F_FIXED, str);
 			DrawColor(0x7F000000);
 			DrawImage(NULL, { (float)VirtualScreenWidth() - w, VirtualScreenHeight() - (l + 2) * 16.0f }, { w, 16 });
 			DrawStringFormat(0, VirtualScreenHeight() - (l + 2) * 16.0f, F_RIGHT, 16, colorWhite, F_FIXED, str);
 		}
 		char str[1024];
-		sprintf(str, "%zu", totalCmd);
+		snprintf(str, sizeof(str), "%zu", totalCmd);
 		float w = (float)DrawStringWidth(16, F_FIXED, str);
 		DrawColor(0xAF000000);
 		DrawImage(NULL, { (float)VirtualScreenWidth() - w, VirtualScreenHeight() - 16.0f }, { w, 16 });
@@ -1323,7 +1324,7 @@ void r_renderer_c::EndFrame()
 	if (debugLayers) {
 		if (ImGui::Begin("Layers", &debugLayers)) {
 			ImGui::Text("Layers: %d", numLayer);
-			ImGui::Text("%d out of %d frames drawn.", drawnFrames, totalFrames);
+			ImGui::Text("%llu out of %llu frames drawn.", (unsigned long long)drawnFrames, (unsigned long long)totalFrames);
 			CVarSliderInt("Optimization", r_layerOptimize);
 			CVarCheckbox("Elide identical frames", r_elideFrames);
 			ImGui::BeginDisabled(true);
@@ -1365,7 +1366,7 @@ void r_renderer_c::EndFrame()
 					ImGui::TableNextColumn();
 					ImGui::Text("%d", layer->subLayer);
 					ImGui::TableNextColumn();
-					ImGui::Text("%d", layer->numCmd);
+					ImGui::Text("%zu", layer->numCmd);
 					ImGui::TableNextColumn();
 					ImGui::Text("%sB", BinaryUnitPrefix(layer->cmdCursor).c_str());
 					ImGui::TableNextColumn();
@@ -1509,7 +1510,7 @@ void r_renderer_c::EndFrame()
 
 	std::chrono::time_point endFrameToc = std::chrono::steady_clock::now();
 	frameStats.AppendDuration(&FrameStats::endFrameStepDurations, endFrameToc - endFrameTic);
-	
+
 	if (showTiming) {
 		if (ImGui::Begin("Timing")) {
 			auto stepStatsUi = [&](std::string label, auto& seq) {
@@ -1630,7 +1631,7 @@ r_shaderHnd_c* r_renderer_c::RegisterShaderFromImage(std::unique_ptr<image_c> im
 		newId = numShader++;
 	}
 	char shname[32];
-	sprintf(shname, "data:%d", newId);
+	snprintf(shname, sizeof(shname), "data:%d", newId);
 	shaderList[newId] = new r_shader_c(this, shname, flags, std::move(img));
 	return new r_shaderHnd_c(shaderList[newId]);
 }
@@ -1640,7 +1641,7 @@ void r_renderer_c::GetShaderImageSize(r_shaderHnd_c* hnd, int& width, int& heigh
 	if (hnd)
 	{
 		while (hnd->sh->tex->status < r_tex_c::SIZE_KNOWN) {
-			Sleep(1);
+				sys->Sleep(1);
 		}
 		width = hnd->sh->tex->fileWidth;
 		height = hnd->sh->tex->fileHeight;

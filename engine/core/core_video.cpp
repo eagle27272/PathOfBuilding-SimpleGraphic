@@ -10,6 +10,7 @@
 #include "core_video.h"
 
 #include <algorithm>
+#include <cstdio>
 
 // ======
 // Locals
@@ -118,7 +119,7 @@ void core_video_c::Save()
 	// Save video size/pos if needed
 	if (vid_resizable->intVal == 3) {
 		char spec[64];
-		sprintf(spec, "%d,%d,%d,%d,%d", sys->video->vid.size[0], sys->video->vid.size[1], sys->video->vid.pos[0], sys->video->vid.pos[1], sys->video->vid.maximised);
+		snprintf(spec, sizeof(spec), "%d,%d,%d,%d,%d", sys->video->vid.size[0], sys->video->vid.size[1], sys->video->vid.pos[0], sys->video->vid.pos[1], sys->video->vid.maximised);
 		vid_last->Set(spec);
 	}
 }

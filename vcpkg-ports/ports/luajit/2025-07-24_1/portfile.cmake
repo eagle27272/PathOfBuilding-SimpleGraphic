@@ -18,6 +18,10 @@ vcpkg_from_github(
 
 vcpkg_cmake_get_vars(cmake_vars_file)
 include("${cmake_vars_file}")
+set(LUAJIT_CROSS_BUILD "${VCPKG_CROSSCOMPILING}")
+if(DEFINED VCPKG_DETECTED_CMAKE_CROSSCOMPILING AND NOT VCPKG_DETECTED_CMAKE_CROSSCOMPILING)
+    set(LUAJIT_CROSS_BUILD FALSE)
+endif()
 
 if(VCPKG_DETECTED_MSVC)
     # Due to lack of better MSVC cross-build support, just always build the host
@@ -45,7 +49,7 @@ if(VCPKG_DETECTED_MSVC)
     vcpkg_copy_pdbs()
 else()
     vcpkg_list(SET options)
-    if(VCPKG_CROSSCOMPILING)
+    if(LUAJIT_CROSS_BUILD)
         list(APPEND options
             "LJARCH=${VCPKG_TARGET_ARCHITECTURE}"
             "BUILDVM_X=${CURRENT_HOST_INSTALLED_DIR}/manual-tools/${PORT}/buildvm-${VCPKG_TARGET_ARCHITECTURE}${VCPKG_HOST_EXECUTABLE_SUFFIX}"
@@ -76,6 +80,12 @@ else()
     endif()
 
     file(COPY "${CMAKE_CURRENT_LIST_DIR}/configure" DESTINATION "${SOURCE_PATH}")
+    file(CHMOD "${SOURCE_PATH}/configure"
+        PERMISSIONS
+            OWNER_READ OWNER_WRITE OWNER_EXECUTE
+            GROUP_READ GROUP_EXECUTE
+            WORLD_READ WORLD_EXECUTE
+    )
     vcpkg_configure_make(SOURCE_PATH "${SOURCE_PATH}"
         COPY_SOURCE
         OPTIONS
@@ -91,6 +101,23 @@ else()
             "TARGET_AR=${VCPKG_DETECTED_CMAKE_AR} rcus"
             "TARGET_STRIP=${VCPKG_DETECTED_CMAKE_STRIP}${strip_options}"
     )
+
+    if(NOT LUAJIT_CROSS_BUILD)
+        set(luajit_tool_config "rel")
+        if(VCPKG_BUILD_TYPE STREQUAL "debug")
+            set(luajit_tool_config "dbg")
+        endif()
+        set(luajit_tool_path "${CURRENT_BUILDTREES_DIR}/${TARGET_TRIPLET}-${luajit_tool_config}/src/luajit${VCPKG_TARGET_EXECUTABLE_SUFFIX}")
+        if(EXISTS "${luajit_tool_path}")
+            file(INSTALL "${luajit_tool_path}"
+                DESTINATION "${CURRENT_PACKAGES_DIR}/bin"
+                FILE_PERMISSIONS
+                    OWNER_READ OWNER_WRITE OWNER_EXECUTE
+                    GROUP_READ GROUP_EXECUTE
+                    WORLD_READ WORLD_EXECUTE
+            )
+        endif()
+    endif()
 endif()
 
 file(REMOVE_RECURSE
@@ -102,7 +129,9 @@ file(REMOVE_RECURSE
     "${CURRENT_PACKAGES_DIR}/share/man"
 )
 
-vcpkg_copy_tools(TOOL_NAMES luajit AUTO_CLEAN)
+if(NOT LUAJIT_CROSS_BUILD)
+    vcpkg_copy_tools(TOOL_NAMES luajit AUTO_CLEAN)
+endif()
 
 vcpkg_fixup_pkgconfig()
 

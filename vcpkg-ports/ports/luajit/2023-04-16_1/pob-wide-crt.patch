@@ -398,13 +398,15 @@ new file mode 100644
 index 00000000..72e9ccae
 --- /dev/null
 +++ b/src/lj_utf8win.h
-@@ -0,0 +1,28 @@
+@@ -0,0 +1,34 @@
 +#ifndef LJ_UTF8_WIN_H
 +#define LJ_UTF8_WIN_H
 +
 +#include <stdbool.h>
 +#include <stddef.h>
 +#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
 +
 +#ifdef _WIN32
 +bool _lua_narrowtobuffer(wchar_t const* srcPtr, char* dstBuf, int dstSize);
@@ -418,8 +420,12 @@ index 00000000..72e9ccae
 +char* _lua_tmpnam();
 +#else
 +#define _lua_fopen(path, mode) fopen(path, mode)
-+#define _lua_getenvcopy(name) strdup(getenv(name))
-+#define _lua_getenvfree(name) free(name)
++static inline char const* _lua_getenvcopy(char const* name)
++{
++  char const* value = getenv(name);
++  return value ? strdup(value) : NULL;
++}
++#define _lua_getenvfree(name) free((void*)(name))
 +#define _lua_remove(path) remove(path)
 +#define _lua_rename(oldpath, newpath) rename(oldpath, newpath)
 +#define _lua_system(cmd) system(cmd)
@@ -429,4 +435,3 @@ index 00000000..72e9ccae
 +#endif
 -- 
 2.42.0.windows.2
-

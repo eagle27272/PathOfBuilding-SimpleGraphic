@@ -341,10 +341,14 @@ void console_c::Warning(const char* fmt, ...)
 	vsprintf_s(text, 4096, fmt, va);
 #else
 	char* text{};
-	vasprintf(&text, fmt, va);
+	int textLen = vasprintf(&text, fmt, va);
 #endif
 	va_end(va);
+#ifdef _WIN32
 	Printf("^4Warning: %s\n", text);
+#else
+	Printf("^4Warning: %s\n", (textLen >= 0 && text) ? text : "Could not format warning message");
+#endif
 #ifndef _WIN32
 	free(text);
 #endif
@@ -667,10 +671,18 @@ void console_c::Executef(const char* fmt, ...)
 	cmd[4095] = 0;
 #else
 	char* cmd{};
-	vasprintf(&cmd, fmt, va);
+	int cmdLen = vasprintf(&cmd, fmt, va);
 #endif
 	va_end(va);
+#ifdef _WIN32
 	Execute(cmd);
+#else
+	if (cmdLen >= 0 && cmd) {
+		Execute(cmd);
+	} else {
+		Print("^4Warning: Could not format console command\n");
+	}
+#endif
 #ifndef _WIN32
 	free(cmd);
 #endif

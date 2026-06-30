@@ -23,9 +23,11 @@
 #endif
 
 #ifndef _WIN32
+#include <cerrno>
 #include <sys/types.h>
+#include <sys/wait.h>
+#include <unistd.h>
 #include <pwd.h>
-#include <uuid/uuid.h>
 #endif
 
 #include <GLFW/glfw3.h>
@@ -47,6 +49,109 @@ static void SE_ErrorTrans(unsigned int code, EXCEPTION_POINTERS* exPtr)
 }
 #endif
 #define GLFW_HAS_GET_KEY_NAME 1
+
+static const char* DetectArchitecture()
+{
+#if defined(_M_ARM64EC)
+	return "arm64ec";
+#elif defined(_M_X64) || defined(__x86_64__) || defined(__amd64__)
+	return "x64";
+#elif defined(_M_IX86) || defined(__i386__)
+	return "x86";
+#elif defined(_M_ARM64) || defined(__aarch64__)
+	return "arm64";
+#elif (defined(_M_ARM) && _M_ARM >= 7) \
+	|| defined(__ARM_ARCH_7__) \
+	|| defined(__ARM_ARCH_7A__) \
+	|| defined(__ARM_ARCH_7R__) \
+	|| defined(__ARM_ARCH_7M__) \
+	|| defined(__ARM_ARCH_7EM__) \
+	|| (defined(__ARM_ARCH) && __ARM_ARCH >= 7)
+	return "armv7";
+#elif (defined(_M_ARM) && _M_ARM == 6) \
+	|| defined(__ARM_ARCH_6__) \
+	|| defined(__ARM_ARCH_6J__) \
+	|| defined(__ARM_ARCH_6K__) \
+	|| defined(__ARM_ARCH_6Z__) \
+	|| defined(__ARM_ARCH_6ZK__) \
+	|| defined(__ARM_ARCH_6T2__) \
+	|| defined(__ARM_ARCH_6M__) \
+	|| (defined(__ARM_ARCH) && __ARM_ARCH == 6)
+	return "armv6";
+#elif defined(_M_ARM) || defined(__arm__)
+	return "arm";
+#elif defined(__riscv) && __riscv_xlen == 64
+	return "riscv64";
+#elif defined(__riscv) && __riscv_xlen == 32
+	return "riscv32";
+#elif defined(__loongarch64) || (defined(__loongarch__) && __loongarch_grlen == 64)
+	return "loongarch64";
+#elif defined(__loongarch32) || (defined(__loongarch__) && __loongarch_grlen == 32)
+	return "loongarch32";
+#elif defined(__powerpc64__) || defined(__ppc64__)
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+	return "ppc64le";
+#else
+	return "ppc64";
+#endif
+#elif defined(__powerpc__) || defined(__ppc__)
+	return "ppc";
+#elif defined(__mips64) || defined(__mips64__)
+	return "mips64";
+#elif defined(__mips__)
+	return "mips";
+#elif defined(__s390x__)
+	return "s390x";
+#elif defined(__s390__)
+	return "s390";
+#else
+	return "unknown";
+#endif
+}
+
+#ifndef _WIN32
+static std::string ShellQuote(std::string_view value)
+{
+	std::string quoted = "'";
+	for (char ch : value) {
+		if (ch == '\'') {
+			quoted += "'\\''";
+		}
+		else {
+			quoted += ch;
+		}
+	}
+	quoted += "'";
+	return quoted;
+}
+
+static std::optional<std::filesystem::path> FindHomePath()
+{
+	if (char const* homePath = getenv("HOME"); homePath && *homePath) {
+		return std::filesystem::path(homePath);
+	}
+	uid_t uid = getuid();
+	struct passwd* pw = getpwuid(uid);
+	if (pw && pw->pw_dir && *pw->pw_dir) {
+		return std::filesystem::path(pw->pw_dir);
+	}
+	return {};
+}
+
+static bool WaitForDetachedLauncher(pid_t pid)
+{
+	if (pid < 0) {
+		return false;
+	}
+	int status{};
+	while (waitpid(pid, &status, 0) == -1) {
+		if (errno != EINTR) {
+			return false;
+		}
+	}
+	return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+}
+#endif
 
 // ===========
 // Timer class
@@ -86,7 +191,7 @@ unsigned long thread_c::statThreadProc(void* obj)
 		}
 #endif
 		// Run thread procedure
-		thread->ThreadProc();	
+		thread->ThreadProc();
 	}
 #ifdef _WIN32
 	catch (EXCEPTION_POINTERS* exPtr) {
@@ -95,7 +200,7 @@ unsigned long thread_c::statThreadProc(void* obj)
 		DWORD code =  exRec->ExceptionCode;
 		char detail[512];
 		if (code == EXCEPTION_ACCESS_VIOLATION && exRec->NumberParameters == 2) {
-			sprintf_s(detail, 512, "Access violation: attempted to %s address %08Xh", 
+			sprintf_s(detail, 512, "Access violation: attempted to %s address %08Xh",
 				exRec->ExceptionInformation[0]? "write to":"read from", static_cast<int>(exRec->ExceptionInformation[1]));
 		} else if (code == EXCEPTION_STACK_OVERFLOW) {
 			strcpy_s(detail, 512, "Stack overflow");
@@ -254,7 +359,7 @@ static int ImGui_ImplGlfw_TranslateUntranslatedKey(int key, int scancode)
 #if GLFW_HAS_GET_KEY_NAME
 	// GLFW 3.1+ attempts to "untranslate" keys, which goes the opposite of what every other framework does, making using lettered shortcuts difficult.
 	// (It had reasons to do so: namely GLFW is/was more likely to be used for WASD-type game controls rather than lettered shortcuts, but IHMO the 3.1 change could have been done differently)
-	// See https://github.com/glfw/glfw/issues/1502 for details.  
+	// See https://github.com/glfw/glfw/issues/1502 for details.
 	// Adding a workaround to undo this (so our keys are translated->untranslated->translated, likely a lossy process).
 	// This won't cover edge cases but this is at least going to cover common cases.
 	if (key >= GLFW_KEY_KP_0 && key <= GLFW_KEY_KP_EQUAL)
@@ -429,8 +534,24 @@ void sys_main_c::SpawnProcess(std::filesystem::path cmdName, const char* argList
 	}
 	FreeWideString(wideArgs);
 #else
-#warning LV: Subprocesses not implemented on this OS.
-	// TODO(LV): Implement subprocesses for other OSes.
+	std::string command = ShellQuote(cmdName.generic_u8string());
+	if (argList && *argList) {
+		command += " ";
+		command += argList;
+	}
+	pid_t pid = fork();
+	if (pid == 0) {
+		if (setsid() == -1) {
+			_exit(127);
+		}
+		pid_t child = fork();
+		if (child != 0) {
+			_exit(child < 0 ? 127 : 0);
+		}
+		execl("/bin/sh", "sh", "-c", command.c_str(), (char*)nullptr);
+		_exit(127);
+	}
+	WaitForDetachedLauncher(pid);
 #endif
 }
 
@@ -454,10 +575,9 @@ std::string GetWineHostVersion()
 #endif
 }
 
-#if _WIN32 || __linux__
+#ifdef _WIN32
 const char* PlatformOpenURL(const char* url)
 {
-#ifdef _WIN32
 	const std::string wineHost = GetWineHostVersion();
 	/*
 	Wine has some loosely determined maximum length on how long of an URL
@@ -467,14 +587,34 @@ const char* PlatformOpenURL(const char* url)
 		return AllocString("Did not open URL, length likely too long for the OS.");
 	ShellExecuteA(NULL, "open", url, NULL, NULL, SW_SHOWDEFAULT);
 	return nullptr;
-#else
-#warning LV: URL opening not implemented on this OS.
-	// TODO(LV): Implement URL opening for other OSes.
-	return AllocString("URL opening not implemented on this OS.");
-#endif
 }
-#else
+#elif defined(__APPLE__) && defined(__MACH__)
 const char* PlatformOpenURL(const char* url);
+#else
+const char* PlatformOpenURL(const char* url)
+{
+	const char* urlLauncher = getenv("SIMPLEGRAPHIC_OPEN_URL_COMMAND");
+	if (!urlLauncher || !*urlLauncher) {
+		urlLauncher = "xdg-open";
+	}
+	pid_t pid = fork();
+	if (pid == 0) {
+		if (setsid() == -1) {
+			_exit(127);
+		}
+		pid_t child = fork();
+		if (child != 0) {
+			_exit(child < 0 ? 127 : 0);
+		}
+		execlp(urlLauncher, urlLauncher, url, (char*)nullptr);
+		_exit(127);
+	}
+	if (!WaitForDetachedLauncher(pid)) {
+		auto error = fmt::format("Could not launch {}.", urlLauncher);
+		return AllocString(error.c_str());
+	}
+	return nullptr;
+}
 #endif
 
 std::optional<std::string> sys_main_c::OpenURL(const char* url)
@@ -496,7 +636,7 @@ void sys_main_c::Error(const char *fmt, ...)
 {
 	if (errorRaised) return;
 	errorRaised = true;
-	
+
 	if (initialised) {
 		video->SetVisible(false);
 		conWin->SetVisible(true);
@@ -509,10 +649,14 @@ void sys_main_c::Error(const char *fmt, ...)
 	vsprintf_s(msg, 4096, fmt, va);
 #else
 	char* msg{};
-	vasprintf(&msg, fmt, va);
+	int msgLen = vasprintf(&msg, fmt, va);
 #endif
 	va_end(va);
+#ifdef _WIN32
 	con->Printf("\n--- ERROR ---\n%s", msg);
+#else
+	con->Printf("\n--- ERROR ---\n%s", (msgLen >= 0 && msg) ? msg : "Could not format error message");
+#endif
 #ifndef _WIN32
 	free(msg);
 #endif
@@ -575,6 +719,9 @@ std::filesystem::path FindBasePath()
 	proc_pidpath(pid, basePath, sizeof(basePath));
 	progPath = basePath;
 #endif
+	if (progPath.empty()) {
+		return weakly_canonical(std::filesystem::current_path());
+	}
 	progPath = weakly_canonical(progPath);
 	return progPath.parent_path();
 }
@@ -587,33 +734,35 @@ std::tuple<std::optional<std::filesystem::path>, std::optional<std::string>> Fin
 	if (FAILED(hr)) {
 		// The path may be inaccessible due to malfunctioning cloud providers.
 		CoTaskMemFree(osPath);
-		return { {}, "Could not obtain Documents path from Windows" };
+		return std::make_tuple(std::optional<std::filesystem::path>{}, std::optional<std::string>{"Could not obtain Documents path from Windows"});
 	}
 	std::wstring pathStr = osPath;
 	CoTaskMemFree(osPath);
 	std::filesystem::path path(pathStr);
-	return { weakly_canonical(path), {} };
+	return std::make_tuple(std::optional<std::filesystem::path>{weakly_canonical(path)}, std::optional<std::string>{});
+#else
+#if defined(__APPLE__) && defined(__MACH__)
+	if (auto homePath = FindHomePath()) {
+		return std::make_tuple(std::optional<std::filesystem::path>{*homePath / "Library/Application Support"}, std::optional<std::string>{});
+	}
+	return std::make_tuple(std::optional<std::filesystem::path>{}, std::optional<std::string>{"Could not determine home directory for macOS user data path"});
 #else
 	if (char const* data_home_path = getenv("XDG_DATA_HOME")) {
-		return { data_home_path, {} };
+		return std::make_tuple(std::optional<std::filesystem::path>{data_home_path}, std::optional<std::string>{});
 	}
-	if (char const* home_path = getenv("HOME")) {
-		return { std::filesystem::path(home_path) / ".local/share", {} };
+	if (auto homePath = FindHomePath()) {
+		return std::make_tuple(std::optional<std::filesystem::path>{*homePath / ".local/share"}, std::optional<std::string>{});
 	}
-	uid_t uid = getuid();
-	struct passwd *pw = getpwuid(uid);
-	return { std::filesystem::path(pw->pw_dir) / ".local/share", {} };
+	return std::make_tuple(std::optional<std::filesystem::path>{}, std::optional<std::string>{"Could not determine home directory for user data path"});
+#endif
 #endif
 }
 
 sys_main_c::sys_main_c()
 	: heldKeyState(KEY_SCROLL + 1, (uint8_t)0)
 {
-#ifdef _WIN64
-	x64 = true;
-#else
-	x64 = false;
-#endif
+	architecture = DetectArchitecture();
+	x64 = architecture == "x64";
 #ifdef _DEBUG
 	debug = true;
 #else
@@ -650,7 +799,7 @@ bool sys_main_c::Run(int argc, char** argv)
 	core = core_IMain::GetHandle(this);
 
 	// Print some handy information
-	con->Printf(CFG_VERSION" %s %s, built " __DATE__ "\n", x64? "x64":"x86", debug? "Debug":"Release");
+	con->Printf(CFG_VERSION" %s %s, built " __DATE__ "\n", architecture.c_str(), debug? "Debug":"Release");
 	if (debuggerRunning) {
 		con->Printf("Debugger is present.\n");
 	}
@@ -693,13 +842,13 @@ bool sys_main_c::Run(int argc, char** argv)
 		core->Shutdown();
 	}
 #ifdef _WIN32
-	catch (EXCEPTION_POINTERS* exPtr) { 
+	catch (EXCEPTION_POINTERS* exPtr) {
 		// C exception
 		PEXCEPTION_RECORD exRec = exPtr->ExceptionRecord;
 		DWORD code =  exRec->ExceptionCode;
 		char detail[512];
 		if (code == EXCEPTION_ACCESS_VIOLATION && exRec->NumberParameters == 2) {
-			sprintf_s(detail, 512, "Access violation: attempted to %s address %08Xh", 
+			sprintf_s(detail, 512, "Access violation: attempted to %s address %08Xh",
 				exRec->ExceptionInformation[0]? "write to":"read from", static_cast<int>(exRec->ExceptionInformation[1]));
 		} else if (code == EXCEPTION_STACK_OVERFLOW) {
 			strcpy_s(detail, 512, "Stack overflow");
@@ -710,7 +859,7 @@ bool sys_main_c::Run(int argc, char** argv)
 	}
 #else
 	catch (std::exception& e) {
-		Error("Exception: ", e.what());
+		Error("Exception: %s", e.what());
 	}
 #endif
 
@@ -726,7 +875,7 @@ bool sys_main_c::Run(int argc, char** argv)
 		while (exitFlag == false) {
 			Sleep(50);
 		}
-	}	
+	}
 
 	initialised = false;
 

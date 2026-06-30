@@ -21,7 +21,7 @@
 #pragma comment(lib, "_lib\\lua53_32MT")
 #endif
 #else
-#if defined(_WIN64) 
+#if defined(_WIN64)
 #pragma comment(lib, "_lib\\lua51_64")
 #else
 #pragma comment(lib, "_lib\\lua51_32")
@@ -75,7 +75,7 @@
   #endif
 #endif
 
-extern "C" SIMPLEGRAPHIC_DLL_PUBLIC int RunLuaFileAsWin(int argc, char** argv)
+static int RunLuaFile(int argc, char** argv)
 {
 #ifdef _MEMTRAK_H
 	strcpy_s(_memTrak_reportName, 512, "SimpleGraphic/memtrak.log");
@@ -95,4 +95,14 @@ extern "C" SIMPLEGRAPHIC_DLL_PUBLIC int RunLuaFileAsWin(int argc, char** argv)
 	timeEndPeriod(1);
 #endif
 	return 0;
+}
+
+extern "C" SIMPLEGRAPHIC_DLL_PUBLIC int RunLuaFileAsWin(int argc, char** argv)
+{
+	return RunLuaFile(argc, argv);
+}
+
+extern "C" SIMPLEGRAPHIC_DLL_PUBLIC int RunLuaFileAsConsole(int argc, char** argv)
+{
+	return RunLuaFile(argc, argv);
 }

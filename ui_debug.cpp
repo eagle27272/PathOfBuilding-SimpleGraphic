@@ -59,7 +59,7 @@ public:
 	int		callHitInitCount = 0;
 	d_callHit_s* callHits = nullptr;
 
-	void	ThreadProc();
+	void	ThreadProc() override;
 };
 
 ui_IDebug* ui_IDebug::GetHandle(ui_main_c* ui)

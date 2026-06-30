@@ -64,6 +64,7 @@ public:
 	sys_IVideo* video = nullptr;
 
 	bool		x64 = false;
+	std::string	architecture;
 	bool		debug = false;
 	bool		debuggerRunning = false;
 	int			processorCount = 0;

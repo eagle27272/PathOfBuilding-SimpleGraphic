@@ -9,15 +9,17 @@ if (DEFINED VCPKG_INSTALLED_DIR AND DEFINED VCPKG_TARGET_TRIPLET)
 
     find_path(LuaJIT_INCLUDE_DIR luajit.h
         PATHS ${LuaJIT_SEARCH_ROOT}/include
-        PATH_SUFFIXES luajit
+        PATH_SUFFIXES luajit luajit-2.1 luajit-2.0
         NO_DEFAULT_PATH)
 
-    find_library(LuaJIT_LIBRARY_RELEASE NAMES lua51
+    set(LuaJIT_LIBRARY_NAMES lua51 luajit-5.1 luajit libluajit-5.1 libluajit)
+
+    find_library(LuaJIT_LIBRARY_RELEASE NAMES ${LuaJIT_LIBRARY_NAMES}
         PATHS ${LuaJIT_SEARCH_ROOT}
         PATH_SUFFIXES lib
         NO_DEFAULT_PATH)
 
-    find_library(LuaJIT_LIBRARY_DEBUG NAMES lua51
+    find_library(LuaJIT_LIBRARY_DEBUG NAMES ${LuaJIT_LIBRARY_NAMES}
         PATHS ${LuaJIT_SEARCH_ROOT}
         PATH_SUFFIXES debug/lib
         NO_DEFAULT_PATH)
@@ -39,7 +41,9 @@ if (DEFINED VCPKG_INSTALLED_DIR AND DEFINED VCPKG_TARGET_TRIPLET)
         if(NOT TARGET LuaJIT::LuaJIT)
           add_library(LuaJIT::LuaJIT UNKNOWN IMPORTED)
           set_target_properties(LuaJIT::LuaJIT PROPERTIES
-            INTERFACE_INCLUDE_DIRECTORIES "${LuaJIT_INCLUDE_DIRS}")
+            INTERFACE_INCLUDE_DIRECTORIES "${LuaJIT_INCLUDE_DIRS}"
+            MAP_IMPORTED_CONFIG_MINSIZEREL Release
+            MAP_IMPORTED_CONFIG_RELWITHDEBINFO Release)
 
           if(LuaJIT_LIBRARY_RELEASE)
             set_property(TARGET LuaJIT::LuaJIT APPEND PROPERTY
@@ -61,6 +65,7 @@ if (DEFINED VCPKG_INSTALLED_DIR AND DEFINED VCPKG_TARGET_TRIPLET)
           endif()
         endif()
     endif()
+    unset(LuaJIT_LIBRARY_NAMES)
     unset(LuaJIT_SEARCH_ROOT)
 else ()
     find_package(PkgConfig)
@@ -72,7 +77,7 @@ else ()
 
     find_path(LUAJIT_INCLUDE_DIR luajit.h
               PATHS ${PC_LUAJIT_INCLUDEDIR} ${PC_LUAJIT_INCLUDE_DIRS}
-              PATH_SUFFIXES luajit-2.0 luajit-2.1)
+              PATH_SUFFIXES luajit luajit-2.0 luajit-2.1)
 
     if(MSVC)
       list(APPEND LUAJIT_NAMES lua51)
@@ -91,8 +96,15 @@ else ()
     include(FindPackageHandleStandardArgs)
     # handle the QUIETLY and REQUIRED arguments and set LUAJIT_FOUND to TRUE
     # if all listed variables are TRUE
-    find_package_handle_standard_args(LuaJit DEFAULT_MSG
+    find_package_handle_standard_args(LuaJIT DEFAULT_MSG
                                       LUAJIT_LIBRARY LUAJIT_INCLUDE_DIR)
 
     mark_as_advanced(LUAJIT_INCLUDE_DIR LUAJIT_LIBRARY)
+
+    if(LuaJIT_FOUND AND NOT TARGET LuaJIT::LuaJIT)
+      add_library(LuaJIT::LuaJIT UNKNOWN IMPORTED)
+      set_target_properties(LuaJIT::LuaJIT PROPERTIES
+        IMPORTED_LOCATION "${LUAJIT_LIBRARY}"
+        INTERFACE_INCLUDE_DIRECTORIES "${LUAJIT_INCLUDE_DIRS}")
+    endif()
 endif()
