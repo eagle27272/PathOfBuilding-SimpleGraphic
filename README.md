@@ -52,7 +52,10 @@ Leave the `runtime_target` input blank to run that matrix. To validate an
 experimental target before adding it to the matrix, set `runtime_target`,
 `vcpkg_triplet`, and the runner/CMake inputs needed by that host. The custom
 workflow lane packages, validates, indexes, smokes, and uploads the single
-runtime archive without requiring the legacy Windows compatibility archive.
+runtime archive without requiring the legacy Windows compatibility archive. It
+also runs the PathOfBuilding-PoE2 runtime-index verifier against the generated
+index, so experimental targets prove the same consumer contract before they are
+promoted into the release matrix.
 
 To build and package the native runtime for the host machine:
 

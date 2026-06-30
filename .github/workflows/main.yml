@@ -340,6 +340,19 @@ jobs:
             SIMPLEGRAPHIC_REQUIRE_LEGACY_WINDOWS_ARCHIVE=0 \
             scripts/validate-runtime-artifacts.sh runtime-artifacts
 
+      - name: Checkout PathOfBuilding-PoE2 consumer verifier
+        uses: actions/checkout@v4
+        with:
+          repository: eagle27272/PathOfBuilding-PoE2
+          path: consumer/PathOfBuilding-PoE2
+
+      - name: Verify PathOfBuilding-PoE2 custom runtime contract
+        shell: bash
+        run: |
+          python3 consumer/PathOfBuilding-PoE2/scripts/verify-runtime-index.py \
+            runtime-artifacts \
+            runtime-artifacts/SimpleGraphicRuntime-index.json
+
       - name: Smoke custom runtime entrypoint
         shell: bash
         run: |

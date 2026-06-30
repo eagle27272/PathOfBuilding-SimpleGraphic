@@ -174,6 +174,8 @@ def test_workflow_dispatch_can_build_one_custom_runtime_target() -> None:
     assert 'SIMPLEGRAPHIC_REQUIRE_LEGACY_WINDOWS_ARCHIVE=0' in source
     assert 'SIMPLEGRAPHIC_EXPECTED_RUNTIME_TARGETS="$target"' in source
     assert "scripts/validate-runtime-artifacts.sh runtime-artifacts" in source
+    assert "Verify PathOfBuilding-PoE2 custom runtime contract" in source
+    assert "consumer/PathOfBuilding-PoE2/scripts/verify-runtime-index.py" in source
     assert "scripts/smoke-runtime-archive.py \"$archive\"" in source
     assert "name: SimpleGraphicRuntime-custom" in source
     assert "runtime-artifacts/SimpleGraphicRuntime-index.json" in source
