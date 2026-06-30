@@ -7,6 +7,9 @@
 
 #include "sys_local.h"
 
+#include <atomic>
+#include <thread>
+
 // =============
 // Configuration
 // =============
@@ -42,8 +45,8 @@ public:
 
 	static LRESULT __stdcall WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
-	volatile bool doRun;
-	volatile bool isRunning;
+	std::atomic_bool doRun{ false };
+	std::atomic_bool isRunning{ false };
 
 	void	RunMessages(HWND hwnd = nullptr);
 	void	ThreadProc();
@@ -68,11 +71,13 @@ void sys_IConsole::FreeHandle(sys_IConsole* hnd)
 sys_console_c::sys_console_c(sys_IMain* sysHnd)
 	: conPrintHook_c(sysHnd->con), sys((sys_main_c*)sysHnd), thread_c(sysHnd)
 {
-	isRunning = false;
-	doRun = true;
+	isRunning.store(false);
+	doRun.store(true);
 
 	ThreadStart(true);
-	while ( !isRunning );
+	while (!isRunning.load()) {
+		std::this_thread::yield();
+	}
 }
 
 void sys_console_c::RunMessages(HWND hwnd)
@@ -154,8 +159,8 @@ void sys_console_c::ThreadProc()
 
 	InstallPrintHook();
 	
-	isRunning = true;
-	while (doRun) {
+	isRunning.store(true);
+	while (doRun.load()) {
 		RunMessages(hwMain);
 		sys->Sleep(1);
 	}
@@ -170,7 +175,7 @@ void sys_console_c::ThreadProc()
 	DestroyWindow(hwMain);
 	UnregisterClass(CFG_SCON_TITLE " Class", sys->hinst);
 
-	isRunning = false;
+	isRunning.store(false);
 
 	// Flush windowless messages (Like WM_QUIT)
 	RunMessages();
@@ -178,8 +183,8 @@ void sys_console_c::ThreadProc()
 
 sys_console_c::~sys_console_c()
 {
-	doRun = false;
-	while (isRunning);
+	doRun.store(false);
+	ThreadJoin();
 }
 
 // ========================
@@ -204,7 +209,7 @@ LRESULT __stdcall sys_console_c::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPA
 		}
 	case WM_CLOSE:
 		// Quit
-		conWin->doRun = false;
+		conWin->doRun.store(false);
 		PostQuitMessage(0);
 		return FALSE;
 	}

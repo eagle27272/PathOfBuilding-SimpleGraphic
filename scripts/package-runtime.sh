@@ -537,7 +537,7 @@ reset_directory_contents "$install_dir"
 cmake --install "$build_dir" --config "$build_type"
 write_runtime_manifest
 
-(cd "$install_dir" && COPYFILE_DISABLE=1 tar -cvf "$runtime_archive" .)
+(cd "$install_dir" && COPYFILE_DISABLE=1 tar -cvf - .) > "$runtime_archive"
 "$python_cmd" "$repo_dir/scripts/verify-runtime-archive.py" "$runtime_archive"
 printf 'Wrote %s\n' "$runtime_archive"
 
@@ -548,6 +548,6 @@ if [ "$runtime_target" = "win32-x64" ]; then
     [ "${#windows_dlls[@]}" -gt 0 ] || die "no DLLs found in $install_dir for legacy Windows archive"
 
     legacy_archive="$archive_dir/SimpleGraphicDLLs-x64-windows.tar"
-    (cd "$install_dir" && COPYFILE_DISABLE=1 tar -cvf "$legacy_archive" ./*.dll)
+    (cd "$install_dir" && COPYFILE_DISABLE=1 tar -cvf - ./*.dll) > "$legacy_archive"
     printf 'Wrote %s\n' "$legacy_archive"
 fi

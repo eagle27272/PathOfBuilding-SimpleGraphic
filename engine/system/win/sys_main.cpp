@@ -221,14 +221,20 @@ unsigned long thread_c::statThreadProc(void* obj)
 
 void thread_c::ThreadStart(bool lowPri)
 {
-	std::thread t(statThreadProc, this);
+	_thread = std::thread(statThreadProc, this);
 #ifdef _WIN32
-	HANDLE thr = t.native_handle();
+	HANDLE thr = _thread.native_handle();
 	if (thr && lowPri) {
 		SetThreadPriority(thr, THREAD_PRIORITY_BELOW_NORMAL);
 	}
 #endif
-	t.detach();
+}
+
+void thread_c::ThreadJoin()
+{
+	if (_thread.joinable()) {
+		_thread.join();
+	}
 }
 
 // ===========

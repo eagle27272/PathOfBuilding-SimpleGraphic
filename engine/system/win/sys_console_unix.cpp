@@ -7,6 +7,7 @@
 
 #include "sys_local.h"
 
+#include <atomic>
 #include <chrono>
 #include <iostream>
 #include <thread>
@@ -29,8 +30,8 @@ public:
 
 	sys_main_c* sys = nullptr;
 
-	volatile bool doRun;
-	volatile bool isRunning;
+	std::atomic_bool doRun{ false };
+	std::atomic_bool isRunning{ false };
 
 	void	RunMessages(void* = nullptr);
 	void	ThreadProc();
@@ -55,11 +56,13 @@ void sys_IConsole::FreeHandle(sys_IConsole* hnd)
 sys_console_c::sys_console_c(sys_IMain* sysHnd)
 	: conPrintHook_c(sysHnd->con), sys((sys_main_c*)sysHnd), thread_c(sysHnd)
 {
-	isRunning = false;
-	doRun = true;
+	isRunning.store(false);
+	doRun.store(true);
 
 	ThreadStart(true);
-	while ( !isRunning );
+	while (!isRunning.load()) {
+		std::this_thread::yield();
+	}
 }
 
 void sys_console_c::RunMessages(void*)
@@ -72,21 +75,21 @@ void sys_console_c::ThreadProc()
 
 	InstallPrintHook();
 
-	isRunning = true;
-	while (doRun) {
+	isRunning.store(true);
+	while (doRun.load()) {
 		RunMessages();
 		sys->Sleep(1);
 	}
 
 	RemovePrintHook();
 
-	isRunning = false;
+	isRunning.store(false);
 }
 
 sys_console_c::~sys_console_c()
 {
-	doRun = false;
-	while (isRunning);
+	doRun.store(false);
+	ThreadJoin();
 }
 
 // ==============

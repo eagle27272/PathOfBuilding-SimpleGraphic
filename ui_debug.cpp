@@ -6,6 +6,8 @@
 
 #include "ui_local.h"
 
+#include <atomic>
+
 // =======
 // Classes
 // =======
@@ -42,13 +44,13 @@ public:
 
 	ui_main_c* ui = nullptr;
 
-	volatile bool	doRun = false;
-	volatile bool	isRunning = false;
+	std::atomic_bool doRun{ false };
+	std::atomic_bool isRunning{ false };
 
-	volatile bool	profiling = false;
+	std::atomic_bool profiling{ false };
 
-	volatile bool	hookHold = false;
-	volatile bool	hookHolding = false;
+	std::atomic_bool hookHold{ false };
+	std::atomic_bool hookHolding{ false };
 
 	volatile int	lineHitNum = 0;
 	int		lineHitSz = 0;
@@ -75,10 +77,10 @@ void ui_IDebug::FreeHandle(ui_IDebug* hnd)
 ui_debug_c::ui_debug_c(ui_main_c* ui)
 	: thread_c(ui->sys), ui(ui)
 {
-	profiling = false;
+	profiling.store(false);
 
-	hookHold = false;
-	hookHolding = false;
+	hookHold.store(false);
+	hookHolding.store(false);
 
 	lineHitNum = 0;
 	lineHitSz = 16;
@@ -89,16 +91,16 @@ ui_debug_c::ui_debug_c(ui_main_c* ui)
 	callHitInitCount = 0;
 	callHits = new d_callHit_s[callHitSz];
 
-	doRun = true;
+	doRun.store(true);
 	ThreadStart();
 }
 
 ui_debug_c::~ui_debug_c()
 {
-	profiling = false;
+	profiling.store(false);
 	while (lineHitNum || callHitNum);
-	doRun = false;
-	while (isRunning);
+	doRun.store(false);
+	ThreadJoin();
 	delete lineHits;
 	for (int i = 0; i < callHitInitCount; i++) {
 		delete callHits[i].lineHits;
@@ -122,9 +124,9 @@ static ui_debug_c* GetDebugPtr(lua_State* L)
 static void debugHook(lua_State* L, lua_Debug* ar)
 {
 	ui_debug_c* d = GetDebugPtr(L);
-	d->hookHolding = true;
-	while (d->hookHold);
-	d->hookHolding = false;
+	d->hookHolding.store(true);
+	while (d->hookHold.load());
+	d->hookHolding.store(false);
 }
 
 static int lineComp(const void* aVoid, const void* bVoid)
@@ -153,20 +155,20 @@ static int callComp(const void* aVoid, const void* bVoid)
 
 void ui_debug_c::ThreadProc()
 {
-	isRunning = true;
-	while (doRun) {
+	isRunning.store(true);
+	while (doRun.load()) {
 		ui->sys->Sleep(1);
 
-		if (profiling) {
+		if (profiling.load()) {
 			if (!ui->inLua) {
 				continue;
 			}
-			hookHold = true;
+			hookHold.store(true);
 			lua_sethook(ui->L, &debugHook, LUA_MASKLINE, 0);
-			while (profiling && !hookHolding);
+			while (profiling.load() && !hookHolding.load());
 			lua_sethook(ui->L, &debugHook, 0, 0);
-			if (!profiling) {
-				hookHold = false;
+			if (!profiling.load()) {
+				hookHold.store(false);
 				continue;
 			}
 			lua_Debug dbg;
@@ -243,8 +245,8 @@ void ui_debug_c::ThreadProc()
 					}
 				}
 			}
-			hookHold = false;
-			while (hookHolding);
+			hookHold.store(false);
+			while (hookHolding.load());
 		}
 		else if (lineHitNum) {
 			ui->sys->con->Printf("Hot lines:\n");
@@ -277,23 +279,23 @@ void ui_debug_c::ThreadProc()
 			callHitNum = 0;
 		}
 	}
-	isRunning = false;
+	isRunning.store(false);
 }
 
 void ui_debug_c::SetProfiling(bool enable)
 {
 	if (enable) {
 		ui->sys->con->Printf("Profiling enabled.\n");
-		profiling = true;
+		profiling.store(true);
 	}
 	else {
 		ui->sys->con->Printf("Profiling finished:\n");
-		profiling = false;
+		profiling.store(false);
 		while (lineHitNum || callHitNum);
 	}
 }
 
 void ui_debug_c::ToggleProfiling()
 {
-	SetProfiling(!profiling);
+	SetProfiling(!profiling.load());
 }

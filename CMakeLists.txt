@@ -471,9 +471,9 @@ if (SIMPLEGRAPHIC_INSTALL_RUNTIME_DEPENDENCIES)
             [[^wpaxholder[.]dll$]]
             [[^wtdccm[.]dll$]]
         POST_EXCLUDE_REGEXES
-            [[.*[\\/]Windows[\\/]System32[\\/].*]]
-            [[.*[\\/]Windows[\\/]SysWOW64[\\/].*]]
-            [[.*[\\/]Windows[\\/]WinSxS[\\/].*]]
+            [[.*[\\/]windows[\\/]system32[\\/].*]]
+            [[.*[\\/]windows[\\/]syswow64[\\/].*]]
+            [[.*[\\/]windows[\\/]winsxs[\\/].*]]
             [[^/System/Library/.*]]
             [[^/usr/lib/.*]]
             [[^/usr/lib64/.*]]

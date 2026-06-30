@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <thread>
 
 // =======
 // Classes
@@ -27,8 +28,10 @@ class thread_c {
 public:
 	thread_c(class sys_IMain* sys);
 	void	ThreadStart(bool lowPri = false);
+	void	ThreadJoin();
 private:
 	class sys_main_c* _sysMain;
+	std::thread _thread;
 	virtual void ThreadProc() = 0;
 	static unsigned long statThreadProc(void* obj);
 };

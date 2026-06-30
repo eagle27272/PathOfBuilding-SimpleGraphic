@@ -74,6 +74,30 @@ def test_linux_vasprintf_results_are_checked() -> None:
     assert "cmdLen >= 0 && cmd" in console_source
 
 
+def test_console_threads_are_joined_with_atomic_shutdown_flags() -> None:
+    header_source = (REPO_ROOT / "engine/system/sys_main.h").read_text(encoding="utf-8")
+    sys_source = (REPO_ROOT / "engine/system/win/sys_main.cpp").read_text(encoding="utf-8")
+
+    assert "std::thread _thread;" in header_source
+    assert "void\tThreadJoin();" in header_source
+    assert "_thread = std::thread(statThreadProc, this);" in sys_source
+    assert "_thread.join();" in sys_source
+    assert ".detach()" not in sys_source
+
+    for path in (
+        REPO_ROOT / "engine/system/win/sys_console.cpp",
+        REPO_ROOT / "engine/system/win/sys_console_unix.cpp",
+        REPO_ROOT / "ui_debug.cpp",
+    ):
+        source = path.read_text(encoding="utf-8")
+        assert "#include <atomic>" in source
+        assert "std::atomic_bool doRun" in source
+        assert "std::atomic_bool isRunning" in source
+        assert "ThreadJoin();" in source
+        assert "volatile bool doRun" not in source
+        assert "volatile bool isRunning" not in source
+
+
 def test_posix_process_launch_detaches_without_leaving_launcher_zombies() -> None:
     source = (REPO_ROOT / "engine/system/win/sys_main.cpp").read_text(encoding="utf-8")
 
@@ -565,8 +589,13 @@ def test_package_script_writes_windows_manifest_and_legacy_archive(tmp_path) -> 
         "while [ \"$#\" -gt 0 ]; do\n"
         "  if [ \"$1\" = \"-cvf\" ]; then\n"
         "    shift\n"
-        "    mkdir -p \"$(dirname \"$1\")\"\n"
-        "    printf 'fake archive\\n' > \"$1\"\n"
+        "    archive=\"$1\"\n"
+        "    if [ \"$archive\" = \"-\" ]; then\n"
+        "      printf 'fake archive\\n'\n"
+        "    else\n"
+        "      mkdir -p \"$(dirname \"$archive\")\"\n"
+        "      printf 'fake archive\\n' > \"$archive\"\n"
+        "    fi\n"
         "    exit 0\n"
         "  fi\n"
         "  shift || true\n"
@@ -632,8 +661,8 @@ def test_package_script_writes_windows_manifest_and_legacy_archive(tmp_path) -> 
     assert not stale_dir.exists()
     assert (archive_dir / "SimpleGraphicRuntime-win32-x64.tar").is_file()
     assert (archive_dir / "SimpleGraphicDLLs-x64-windows.tar").is_file()
-    assert "SimpleGraphicRuntime-win32-x64.tar" in tar_calls
-    assert "SimpleGraphicDLLs-x64-windows.tar" in tar_calls
+    assert "tar -cvf - ." in tar_calls
+    assert "tar -cvf - ./SimpleGraphic.dll" in tar_calls
     assert "./SimpleGraphic.dll" in tar_calls
     assert "./lcurl.dll" in tar_calls
     assert "./lua-utf8.dll" in tar_calls
@@ -762,9 +791,9 @@ def test_cmake_excludes_common_system_library_locations_from_runtime_archives() 
         "[[^wtdsensor[.]dll$]]",
         "[[^wpaxholder[.]dll$]]",
         "[[^wtdccm[.]dll$]]",
-        r"[[.*[\\/]Windows[\\/]System32[\\/].*]]",
-        r"[[.*[\\/]Windows[\\/]SysWOW64[\\/].*]]",
-        r"[[.*[\\/]Windows[\\/]WinSxS[\\/].*]]",
+        r"[[.*[\\/]windows[\\/]system32[\\/].*]]",
+        r"[[.*[\\/]windows[\\/]syswow64[\\/].*]]",
+        r"[[.*[\\/]windows[\\/]winsxs[\\/].*]]",
         "[[^/System/Library/.*]]",
         "[[^/usr/lib/.*]]",
         "[[^/usr/lib64/.*]]",
