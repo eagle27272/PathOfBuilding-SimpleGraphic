@@ -30,6 +30,7 @@ else
 fi
 [ "${#expected_targets[@]}" -gt 0 ] || die "expected runtime target list is empty"
 require_legacy_windows="${SIMPLEGRAPHIC_REQUIRE_LEGACY_WINDOWS_ARCHIVE:-1}"
+supported_runtime_suffixes=(".tar" ".tar.gz" ".tgz")
 
 target_is_expected() {
     local candidate="$1"
@@ -41,10 +42,35 @@ target_is_expected() {
 }
 
 runtime_archive_paths=()
-for path in "$artifact_dir"/SimpleGraphicRuntime-*.tar; do
-    [ -e "$path" ] || continue
-    runtime_archive_paths+=("$path")
+for suffix in "${supported_runtime_suffixes[@]}"; do
+    for path in "$artifact_dir"/SimpleGraphicRuntime-*$suffix; do
+        [ -e "$path" ] || continue
+        runtime_archive_paths+=("$path")
+    done
 done
+
+archive_target_from_path() {
+    local base="$1"
+    local target
+    case "$base" in
+        SimpleGraphicRuntime-*.tar.gz)
+            target="${base#SimpleGraphicRuntime-}"
+            target="${target%.tar.gz}"
+            ;;
+        SimpleGraphicRuntime-*.tgz)
+            target="${base#SimpleGraphicRuntime-}"
+            target="${target%.tgz}"
+            ;;
+        SimpleGraphicRuntime-*.tar)
+            target="${base#SimpleGraphicRuntime-}"
+            target="${target%.tar}"
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+    printf '%s\n' "$target"
+}
 
 for target in "${expected_targets[@]}"; do
     case "$target" in
@@ -52,14 +78,19 @@ for target in "${expected_targets[@]}"; do
             die "unsafe expected runtime target: $target"
             ;;
     esac
-    path="$artifact_dir/SimpleGraphicRuntime-$target.tar"
-    [ -f "$path" ] || die "missing runtime archive: $path"
+    matching_paths=()
+    for suffix in "${supported_runtime_suffixes[@]}"; do
+        path="$artifact_dir/SimpleGraphicRuntime-$target$suffix"
+        [ -f "$path" ] || continue
+        matching_paths+=("$path")
+    done
+    [ "${#matching_paths[@]}" -gt 0 ] || die "missing runtime archive for target: $target"
+    [ "${#matching_paths[@]}" -eq 1 ] || die "duplicate runtime archives for target: $target"
 done
 
 for path in "${runtime_archive_paths[@]}"; do
     base="$(basename -- "$path")"
-    target="${base#SimpleGraphicRuntime-}"
-    target="${target%.tar}"
+    target="$(archive_target_from_path "$base")" || die "unsupported runtime archive: $base"
     case "$target" in
         ''|.*|*/*|*\\*|*[!a-z0-9._-]*)
             die "unsafe runtime archive target: $base"

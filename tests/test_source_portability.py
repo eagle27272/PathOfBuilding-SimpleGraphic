@@ -143,11 +143,66 @@ def test_package_script_uses_host_runnable_vcpkg_binary() -> None:
     assert "SIMPLEGRAPHIC_VCPKG_ROOT" in source
     assert "windows_path()" in source
     assert "cygpath -w" in source
-    assert 'cmd.exe /d /c call "$(windows_path "$vcpkg_root/bootstrap-vcpkg.bat")"' in source
+    assert 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$(windows_path "$vcpkg_root/scripts/bootstrap.ps1")" -disableMetrics' in source
+    assert 'cmd.exe /d /c call "$(windows_path "$vcpkg_root/bootstrap-vcpkg.bat")" -disableMetrics' in source
     assert "vcpkg_binary_is_usable()" in source
+    assert '[ -f "$candidate" ] || return 1' in source
+    assert 'if [ "$host_platform" != "win32" ]; then' in source
     assert '"$candidate" version >/dev/null 2>&1' in source
     assert "-DCMAKE_TOOLCHAIN_FILE=\"$vcpkg_root/scripts/buildsystems/vcpkg.cmake\"" in source
     assert "vcpkg bootstrap did not produce a runnable host binary" in source
+
+
+def test_package_script_auto_detects_latest_windows_visual_studio_generator(tmp_path) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    cmake_calls = tmp_path / "cmake.log"
+    vcpkg_root = tmp_path / "vcpkg"
+    vcpkg_root.mkdir()
+    _write_executable(
+        vcpkg_root / "vcpkg.exe",
+        "#!/bin/sh\n"
+        "printf 'fake vcpkg\\n'\n",
+    )
+    _write_executable(
+        bin_dir / "uname",
+        "#!/bin/sh\n"
+        "if [ \"${1:-}\" = \"-s\" ]; then\n"
+        "  printf 'MINGW64_NT-10.0\\n'\n"
+        "else\n"
+        "  printf 'AMD64\\n'\n"
+        "fi\n",
+    )
+    _write_executable(
+        bin_dir / "cmake",
+        "#!/bin/sh\n"
+        "if [ \"${1:-}\" = \"-E\" ] && [ \"${2:-}\" = \"capabilities\" ]; then\n"
+        "  cat <<'JSON'\n"
+        "{\"generators\":[{\"name\":\"Visual Studio 17 2022\"},{\"name\":\"Visual Studio 18 2026\"},{\"name\":\"Ninja\"}]}\n"
+        "JSON\n"
+        "  exit 0\n"
+        "fi\n"
+        f"printf '%s\\n' \"$*\" > {cmake_calls}\n"
+        "exit 1\n",
+    )
+    _write_executable(bin_dir / "tar", "#!/bin/sh\nexit 0\n")
+
+    env = os.environ.copy()
+    env["PATH"] = f"{bin_dir}{os.pathsep}{env['PATH']}"
+    env["SIMPLEGRAPHIC_RUNTIME_TARGET"] = "win32-x64"
+    env["SIMPLEGRAPHIC_CMAKE_GENERATOR"] = "auto"
+    env["SIMPLEGRAPHIC_CMAKE_PLATFORM"] = "x64"
+    env["SIMPLEGRAPHIC_VCPKG_ROOT"] = str(vcpkg_root)
+    result = subprocess.run(
+        ["bash", str(REPO_ROOT / "scripts" / "package-runtime.sh")],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    assert "Using CMake generator Visual Studio 18 2026" in result.stdout
+    assert "-G Visual Studio 18 2026 -A x64" in cmake_calls.read_text(encoding="utf-8")
 
 
 def test_package_script_clears_mounted_install_directory_contents() -> None:
@@ -280,7 +335,75 @@ def test_package_script_accepts_architecture_first_target_alias(tmp_path) -> Non
     assert "Packaging SimpleGraphic runtime linux-x64 with vcpkg triplet x64-linux-dynamic" in result.stdout
 
 
-def test_package_script_bootstraps_vcpkg_with_windows_converted_path(tmp_path) -> None:
+def test_package_script_bootstraps_vcpkg_with_windows_powershell_path(tmp_path) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    calls = tmp_path / "calls.log"
+    vcpkg_root = tmp_path / "vcpkg"
+    vcpkg_root.mkdir()
+    (vcpkg_root / "scripts").mkdir()
+    (vcpkg_root / "scripts" / "bootstrap.ps1").write_text("", encoding="utf-8")
+    (vcpkg_root / "bootstrap-vcpkg.bat").write_text("@echo off\n", encoding="utf-8")
+    _write_executable(
+        bin_dir / "uname",
+        "#!/bin/sh\n"
+        "if [ \"${1:-}\" = \"-s\" ]; then\n"
+        "  printf 'MINGW64_NT-10.0\\n'\n"
+        "else\n"
+        "  printf 'AMD64\\n'\n"
+        "fi\n",
+    )
+    _write_executable(
+        bin_dir / "cygpath",
+        "#!/bin/sh\n"
+        "if [ \"${1:-}\" = \"-w\" ]; then\n"
+        "  shift\n"
+        "fi\n"
+        "case \"$1\" in\n"
+        "  */scripts/bootstrap.ps1) printf 'C:\\\\repo\\\\vcpkg\\\\scripts\\\\bootstrap.ps1\\n' ;;\n"
+        "  *) printf 'C:\\\\repo\\\\vcpkg\\\\bootstrap-vcpkg.bat\\n' ;;\n"
+        "esac\n",
+    )
+    _write_executable(
+        bin_dir / "powershell.exe",
+        "#!/bin/sh\n"
+        f"printf '%s\\n' \"$*\" > {calls}\n"
+        f"cat > {vcpkg_root / 'vcpkg.exe'} <<'EOF'\n"
+        "#!/bin/sh\n"
+        "printf 'fake vcpkg\\n'\n"
+        "EOF\n"
+        f"chmod +x {vcpkg_root / 'vcpkg.exe'}\n",
+    )
+    _write_executable(
+        bin_dir / "cmake",
+        "#!/bin/sh\n"
+        "case \"$1\" in\n"
+        "  --build|--install) exit 0 ;;\n"
+        "  *) exit 0 ;;\n"
+        "esac\n",
+    )
+    _write_executable(bin_dir / "tar", "#!/bin/sh\nexit 1\n")
+
+    env = os.environ.copy()
+    env["PATH"] = f"{bin_dir}{os.pathsep}{env['PATH']}"
+    env["SIMPLEGRAPHIC_RUNTIME_TARGET"] = "win32-x64"
+    env["SIMPLEGRAPHIC_VCPKG_ROOT"] = str(vcpkg_root)
+    result = subprocess.run(
+        ["bash", str(REPO_ROOT / "scripts" / "package-runtime.sh")],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    assert calls.read_text(encoding="utf-8").strip() == (
+        "-NoProfile -ExecutionPolicy Bypass -File "
+        "C:\\repo\\vcpkg\\scripts\\bootstrap.ps1 -disableMetrics"
+    )
+    assert "expected runtime file is missing: SimpleGraphic.dll" in result.stderr
+
+
+def test_package_script_bootstraps_vcpkg_with_windows_cmd_fallback(tmp_path) -> None:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     calls = tmp_path / "calls.log"
@@ -336,7 +459,7 @@ def test_package_script_bootstraps_vcpkg_with_windows_converted_path(tmp_path) -
     )
 
     assert result.returncode == 1
-    assert calls.read_text(encoding="utf-8").strip() == "/d /c call C:\\repo\\vcpkg\\bootstrap-vcpkg.bat"
+    assert calls.read_text(encoding="utf-8").strip() == "/d /c call C:\\repo\\vcpkg\\bootstrap-vcpkg.bat -disableMetrics"
     assert "expected runtime file is missing: SimpleGraphic.dll" in result.stderr
 
 

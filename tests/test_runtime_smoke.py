@@ -32,12 +32,20 @@ def _host_runtime_names() -> tuple[str, str, str]:
     pytest.skip(f"runtime smoke fixture does not support {sys.platform}")
 
 
-def _compile_dummy_runtime_library(path: pathlib.Path) -> None:
+def _compile_dummy_runtime_library(path: pathlib.Path, crash_on_process_exit: bool = False) -> None:
     compiler = shutil.which("cc") or shutil.which("clang") or shutil.which("gcc")
     if not compiler:
         pytest.skip("a C compiler is required for the runtime smoke fixture")
 
     source = path.with_suffix(".c")
+    destructor = """
+#if !defined(_WIN32)
+__attribute__((destructor)) static void crash_on_process_exit(void) {
+    volatile int* pointer = (int*)0;
+    *pointer = 1;
+}
+#endif
+""" if crash_on_process_exit else ""
     source.write_text(
         """
 #include <stdio.h>
@@ -47,6 +55,9 @@ def _compile_dummy_runtime_library(path: pathlib.Path) -> None:
 #else
 #define EXPORT __attribute__((visibility("default")))
 #endif
+"""
+        + destructor
+        + """
 EXPORT int RunLuaFileAsConsole(int argc, char** argv) {
     if (argc != 1 || !argv || !argv[0]) {
         return 11;
@@ -77,11 +88,17 @@ EXPORT int RunLuaFileAsWin(int argc, char** argv) {
     subprocess.run(command, check=True, capture_output=True, text=True)
 
 
-def _write_runtime_archive(tmp_path: pathlib.Path) -> pathlib.Path:
+def _write_runtime_archive(
+    tmp_path: pathlib.Path,
+    crash_on_process_exit: bool = False,
+) -> pathlib.Path:
     platform, architecture, entry_library = _host_runtime_names()
     archive_root = tmp_path / "archive"
     archive_root.mkdir()
-    _compile_dummy_runtime_library(archive_root / entry_library)
+    _compile_dummy_runtime_library(
+        archive_root / entry_library,
+        crash_on_process_exit=crash_on_process_exit,
+    )
     manifest = {
         "schemaVersion": 1,
         "name": "SimpleGraphic",
@@ -142,6 +159,25 @@ def _write_incompatible_runtime_archive(tmp_path: pathlib.Path) -> pathlib.Path:
 
 def test_smoke_runtime_archive_invokes_console_entrypoint(tmp_path) -> None:
     archive_path = _write_runtime_archive(tmp_path)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts" / "smoke-runtime-archive.py"),
+            str(archive_path),
+        ],
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert f"Smoke-tested {archive_path.name} with RunLuaFileAsConsole" in result.stdout
+
+
+def test_smoke_runtime_archive_ignores_post_return_native_exit_crash(tmp_path) -> None:
+    if sys.platform == "win32":
+        pytest.skip("destructor crash fixture is POSIX-only")
+    archive_path = _write_runtime_archive(tmp_path, crash_on_process_exit=True)
 
     result = subprocess.run(
         [

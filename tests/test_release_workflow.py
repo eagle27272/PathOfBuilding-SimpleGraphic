@@ -111,10 +111,10 @@ def test_release_workflow_matrix_matches_package_script_defaults() -> None:
         target: values["triplet"] for target, values in matrix.items()
     }
     assert matrix["win32-x64"]["os"] == "windows-2025"
-    assert matrix["win32-x64"]["generator"] == "Visual Studio 17 2022"
+    assert matrix["win32-x64"]["generator"] == "auto"
     assert matrix["win32-x64"]["cmake_platform"] == "x64"
     assert matrix["win32-arm64"]["os"] == "windows-11-arm"
-    assert matrix["win32-arm64"]["generator"] == "Visual Studio 17 2022"
+    assert matrix["win32-arm64"]["generator"] == "auto"
     assert matrix["win32-arm64"]["cmake_platform"] == "ARM64"
     assert matrix["linux-x64"]["os"] == "ubuntu-24.04"
     assert matrix["linux-arm64"]["os"] == "ubuntu-24.04-arm"
@@ -254,9 +254,25 @@ def test_release_workflow_validates_all_artifacts_but_only_publishes_runtime_arc
     assert "scripts/validate-runtime-artifacts.sh runtime-artifacts" in source
     assert "name: SimpleGraphicRuntime-index" in source
     assert "runtime-artifacts/SimpleGraphicRuntime-index.json" in source
-    assert "for archive in release-artifacts/SimpleGraphicRuntime-*.tar; do" in source
+    assert "for archive in \\" in source
+    assert "release-artifacts/SimpleGraphicRuntime-*.tar \\" in source
+    assert "release-artifacts/SimpleGraphicRuntime-*.tar.gz" in source
+    assert "release-artifacts/SimpleGraphicRuntime-*.tgz" in source
+    assert '[ -f "$archive" ] || continue' in source
     assert "gh release upload \"${{ github.event.release.tag_name }}\" \"$archive\" --clobber" in source
     assert "release-artifacts/SimpleGraphicRuntime-index.json --clobber" in source
     assert "release-artifacts/SimpleGraphicDLLs-x64-windows.tar --clobber" in source
     assert "release-artifacts/SimpleGraphicRuntime-*.tar --clobber" not in source
     assert "SimpleGraphicRuntime-${{ matrix.target }}-pdb" in source
+
+
+def test_release_workflow_verifies_poe2_consumer_runtime_contract() -> None:
+    source = file_text(WORKFLOW)
+
+    assert "Checkout PathOfBuilding-PoE2 consumer verifier" in source
+    assert "repository: eagle27272/PathOfBuilding-PoE2" in source
+    assert "path: consumer/PathOfBuilding-PoE2" in source
+    assert "Verify PathOfBuilding-PoE2 runtime contract" in source
+    assert "consumer/PathOfBuilding-PoE2/scripts/verify-runtime-index.py" in source
+    assert "runtime-artifacts/SimpleGraphicRuntime-index.json" in source
+    assert source.index("Verify PathOfBuilding-PoE2 runtime contract") < source.index("Archive runtime index")

@@ -48,11 +48,15 @@ Try to avoid paths with spaces, some of our dependencies are brittle and won't b
    `scripts/write-runtime-index.py`, alongside the runtime archives. The index
    records each target's archive name, normalized platform and architecture,
    size, SHA-256 hash, entry library, entry points, and Lua module names for
-   PathOfBuilding-PoE2 release ingestion. The runtime workflow can be run
-   manually with a blank `runtime_target` input to rebuild the full release
-   matrix, or with `runtime_target`, `vcpkg_triplet`, runner, and CMake inputs
-   to package and validate one future target before adding it to the release
-   matrix.
+   PathOfBuilding-PoE2 release ingestion. CI validates that index with the
+   verifier from `eagle27272/PathOfBuilding-PoE2` before publishing it. The
+   release validator and index writer accept `SimpleGraphicRuntime` archives
+   with `.tar`, `.tar.gz`, or `.tgz` suffixes; the package script writes `.tar`
+   archives by default. The runtime workflow can be run manually with a blank
+   `runtime_target` input to
+   rebuild the full release matrix, or with `runtime_target`, `vcpkg_triplet`,
+   runner, and CMake inputs to package and validate one future target before
+   adding it to the release matrix.
 
    On Ubuntu Linux, install the same native build prerequisites as the release
    workflow before packaging:

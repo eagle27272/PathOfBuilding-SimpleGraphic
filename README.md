@@ -39,7 +39,13 @@ The Windows x64 release also keeps publishing the legacy
 `SimpleGraphicDLLs-x64-windows.tar` archive for existing consumers.
 Release validation writes and publishes `SimpleGraphicRuntime-index.json` beside
 the archives so consumers can verify the exact target list, file sizes, and
-SHA-256 hashes before installing runtime payloads.
+SHA-256 hashes before installing runtime payloads. The release workflow also
+runs the `eagle27272/PathOfBuilding-PoE2` runtime-index verifier against the
+artifact set before uploading the index, so the published contract is checked by
+the consumer that installs it.
+Runtime indexes and release validation accept `SimpleGraphicRuntime` archives
+with `.tar`, `.tar.gz`, or `.tgz` suffixes; the package script writes `.tar`
+archives by default.
 The runtime workflow can also be started manually from GitHub Actions with
 `workflow_dispatch` to validate the full pinned runner matrix before a release.
 Leave the `runtime_target` input blank to run that matrix. To validate an
@@ -78,8 +84,8 @@ not match the Windows/macOS/Linux defaults, set `SIMPLEGRAPHIC_ENTRY_LIBRARY`,
 package script. Those values are validated as flat file names and written into
 `SimpleGraphicRuntime.json`.
 
-Each `SimpleGraphicRuntime-<platform>-<architecture>.tar` archive has a flat
-root directory. It contains `SimpleGraphicRuntime.json`, the native
+Each `SimpleGraphicRuntime-<platform>-<architecture>` archive has a flat root
+directory. It contains `SimpleGraphicRuntime.json`, the native
 SimpleGraphic shared library (`SimpleGraphic.dll`, `libSimpleGraphic.dylib`, or
 `libSimpleGraphic.so` for the supported release platforms), the Lua C modules
 (`lcurl`, `socket`, `lua-utf8`, `lzip`), and shared runtime dependencies. The

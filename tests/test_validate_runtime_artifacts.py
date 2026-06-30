@@ -220,6 +220,67 @@ def test_validate_runtime_artifacts_accepts_custom_future_target_set(tmp_path) -
     assert "legacyArchives" not in index
 
 
+def test_validate_runtime_artifacts_accepts_supported_compressed_archive_suffix(
+    tmp_path,
+) -> None:
+    repo_root = pathlib.Path(__file__).resolve().parents[1]
+    artifact_dir = tmp_path / "artifacts"
+    artifact_dir.mkdir()
+    archive_path = make_linux_runtime_archive(
+        _workspace(tmp_path, "freebsd-riscv64-tgz"),
+        platform="freebsd",
+        architecture="riscv64",
+        machine=243,
+        entry_library="SimpleGraphic.native",
+        lua_modules=[
+            "lcurl.native",
+            "lua-utf8.native",
+            "socket.native",
+            "lzip.native",
+        ],
+    )
+    archive_path = _copy_archive(archive_path, artifact_dir)
+    archive_path.rename(archive_path.with_suffix(".tgz"))
+
+    env = os.environ.copy()
+    env["SIMPLEGRAPHIC_EXPECTED_RUNTIME_TARGETS"] = "freebsd-riscv64"
+    env["SIMPLEGRAPHIC_REQUIRE_LEGACY_WINDOWS_ARCHIVE"] = "false"
+    result = subprocess.run(
+        [str(repo_root / "scripts" / "validate-runtime-artifacts.sh"), str(artifact_dir)],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    index = json.loads((artifact_dir / "SimpleGraphicRuntime-index.json").read_text(encoding="utf-8"))
+    assert index["runtimeArchives"][0]["fileName"] == "SimpleGraphicRuntime-freebsd-riscv64.tgz"
+
+
+def test_validate_runtime_artifacts_rejects_duplicate_target_archive_suffixes(
+    tmp_path,
+) -> None:
+    repo_root = pathlib.Path(__file__).resolve().parents[1]
+    artifact_dir = tmp_path / "artifacts"
+    artifact_dir.mkdir()
+    (artifact_dir / "SimpleGraphicRuntime-freebsd-riscv64.tar").write_bytes(b"placeholder")
+    (artifact_dir / "SimpleGraphicRuntime-freebsd-riscv64.tgz").write_bytes(b"placeholder")
+
+    env = os.environ.copy()
+    env["SIMPLEGRAPHIC_EXPECTED_RUNTIME_TARGETS"] = "freebsd-riscv64"
+    env["SIMPLEGRAPHIC_REQUIRE_LEGACY_WINDOWS_ARCHIVE"] = "false"
+    result = subprocess.run(
+        [str(repo_root / "scripts" / "validate-runtime-artifacts.sh"), str(artifact_dir)],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    assert "duplicate runtime archives for target: freebsd-riscv64" in result.stderr
+    assert not (artifact_dir / "SimpleGraphicRuntime-index.json").exists()
+
+
 def test_validate_runtime_artifacts_rejects_unsafe_custom_expected_target(
     tmp_path,
 ) -> None:

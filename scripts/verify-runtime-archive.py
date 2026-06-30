@@ -37,7 +37,6 @@ KNOWN_ARCHITECTURES = {
 ELF_MACHINES = {
     3: "x86",
     20: "ppc",
-    21: "ppc64",
     40: "arm",
     62: "x64",
     183: "arm64",
@@ -260,8 +259,7 @@ def normalized_architecture(architecture: str) -> str:
         "i486": "x86",
         "i586": "x86",
         "i686": "x86",
-        "ppc64el": "ppc64",
-        "ppc64le": "ppc64",
+        "ppc64el": "ppc64le",
     }
     if architecture.startswith(("armv5", "armv6", "armv7")):
         return "arm"
@@ -276,6 +274,8 @@ def detect_elf_architectures(data: bytes) -> set[str]:
     if not endian:
         return set()
     machine = struct.unpack_from(f"{endian}H", data, 18)[0]
+    if machine == 21:
+        return {"ppc64le"} if endian == "<" else {"ppc64"}
     if machine in ELF_CLASS_MACHINES:
         architecture = ELF_CLASS_MACHINES[machine].get(elf_class)
         return {architecture} if architecture else set()

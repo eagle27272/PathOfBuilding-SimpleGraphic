@@ -45,12 +45,12 @@ jobs:
           - target: win32-x64
             os: windows-2025
             triplet: x64-windows-release
-            generator: Visual Studio 17 2022
+            generator: auto
             cmake_platform: x64
           - target: win32-arm64
             os: windows-11-arm
             triplet: arm64-windows
-            generator: Visual Studio 17 2022
+            generator: auto
             cmake_platform: ARM64
           - target: linux-x64
             os: ubuntu-24.04
@@ -224,6 +224,19 @@ jobs:
         shell: bash
         run: scripts/validate-runtime-artifacts.sh runtime-artifacts
 
+      - name: Checkout PathOfBuilding-PoE2 consumer verifier
+        uses: actions/checkout@v4
+        with:
+          repository: eagle27272/PathOfBuilding-PoE2
+          path: consumer/PathOfBuilding-PoE2
+
+      - name: Verify PathOfBuilding-PoE2 runtime contract
+        shell: bash
+        run: |
+          python3 consumer/PathOfBuilding-PoE2/scripts/verify-runtime-index.py \
+            runtime-artifacts \
+            runtime-artifacts/SimpleGraphicRuntime-index.json
+
       - name: Archive runtime index
         uses: actions/upload-artifact@v4
         with:
@@ -368,7 +381,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for archive in release-artifacts/SimpleGraphicRuntime-*.tar; do
+          for archive in \
+            release-artifacts/SimpleGraphicRuntime-*.tar \
+            release-artifacts/SimpleGraphicRuntime-*.tar.gz \
+            release-artifacts/SimpleGraphicRuntime-*.tgz; do
+            [ -f "$archive" ] || continue
             gh release upload "${{ github.event.release.tag_name }}" "$archive" --clobber
           done
           gh release upload "${{ github.event.release.tag_name }}" \

@@ -5,6 +5,7 @@ import json
 import os
 import platform as platform_module
 import pathlib
+import subprocess
 import sys
 import tarfile
 import tempfile
@@ -148,6 +149,18 @@ def call_entrypoint(library_path: pathlib.Path, entrypoint: str, script_path: pa
             dll_directory.close()
 
 
+def run_entrypoint_child(library_path: pathlib.Path, entrypoint: str, script_path: pathlib.Path) -> int:
+    command = [
+        sys.executable,
+        str(pathlib.Path(__file__).resolve()),
+        "--entrypoint-child",
+        str(library_path),
+        entrypoint,
+        str(script_path),
+    ]
+    return subprocess.run(command, cwd=library_path.parent).returncode
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Smoke-test a packaged SimpleGraphic runtime archive")
     parser.add_argument("archive", type=pathlib.Path)
@@ -200,12 +213,20 @@ def run_smoke(args: argparse.Namespace, root: pathlib.Path) -> int | None:
     previous_cwd = pathlib.Path.cwd()
     try:
         os.chdir(root)
-        return call_entrypoint(library_path, args.entrypoint, script_path)
+        return run_entrypoint_child(library_path, args.entrypoint, script_path)
     finally:
         os.chdir(previous_cwd)
 
 
 def main() -> int:
+    if len(sys.argv) == 5 and sys.argv[1] == "--entrypoint-child":
+        result = call_entrypoint(
+            pathlib.Path(sys.argv[2]).resolve(),
+            sys.argv[3],
+            pathlib.Path(sys.argv[4]).resolve(),
+        )
+        os._exit(result & 0xFF)
+
     args = parse_args()
     if not args.archive.is_file():
         fail(f"archive does not exist: {args.archive}")

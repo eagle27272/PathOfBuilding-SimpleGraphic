@@ -112,6 +112,25 @@ detect_python() {
     fi
 }
 
+detect_visual_studio_generator() {
+    cmake -E capabilities | "$python_cmd" -c '
+import json
+import re
+import sys
+
+data = json.load(sys.stdin)
+generators = []
+for generator in data.get("generators", []):
+    name = generator.get("name", "")
+    match = re.match(r"Visual Studio ([0-9]+) ", name)
+    if match:
+        generators.append((int(match.group(1)), name))
+if not generators:
+    sys.exit(1)
+print(max(generators)[1])
+'
+}
+
 require_python_venv() {
     local venv_dir
     venv_dir="${TMPDIR:-/tmp}/simplegraphic-venv-check.$$"
@@ -309,7 +328,10 @@ print_package_config() {
 
 vcpkg_binary_is_usable() {
     local candidate="$1"
-    [ -x "$candidate" ] || return 1
+    [ -f "$candidate" ] || return 1
+    if [ "$host_platform" != "win32" ]; then
+        [ -x "$candidate" ] || return 1
+    fi
     "$candidate" version >/dev/null 2>&1
 }
 
@@ -320,8 +342,14 @@ bootstrap_vcpkg() {
     fi
 
     [ -d "$vcpkg_root" ] || die "vcpkg root does not exist: $vcpkg_root"
-    if [ "$host_platform" = "win32" ] && command -v cmd.exe >/dev/null 2>&1; then
-        cmd.exe /d /c call "$(windows_path "$vcpkg_root/bootstrap-vcpkg.bat")"
+    if [ "$host_platform" = "win32" ]; then
+        if command -v powershell.exe >/dev/null 2>&1; then
+            powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$(windows_path "$vcpkg_root/scripts/bootstrap.ps1")" -disableMetrics
+        elif command -v cmd.exe >/dev/null 2>&1; then
+            cmd.exe /d /c call "$(windows_path "$vcpkg_root/bootstrap-vcpkg.bat")" -disableMetrics
+        else
+            die "powershell.exe or cmd.exe is required to bootstrap vcpkg on Windows"
+        fi
     else
         "$vcpkg_root/bootstrap-vcpkg.sh"
     fi
@@ -417,6 +445,12 @@ fi
 
 bootstrap_vcpkg
 mkdir -p "$archive_dir"
+
+if [ "$generator" = "auto" ]; then
+    [ "$host_platform" = "win32" ] || die "SIMPLEGRAPHIC_CMAKE_GENERATOR=auto is only supported on Windows"
+    generator="$(detect_visual_studio_generator)" || die "could not detect an installed Visual Studio CMake generator"
+    printf 'Using CMake generator %s\n' "$generator"
+fi
 
 configure_args=(
     -S "$repo_dir"

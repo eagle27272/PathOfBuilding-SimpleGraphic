@@ -540,6 +540,24 @@ def test_verify_runtime_archive_accepts_armv7_label_for_elf_arm_binary(tmp_path)
     assert "Verified" in result.stdout
 
 
+def test_verify_runtime_archive_accepts_little_endian_ppc64le_elf_binary(tmp_path):
+    result = run_verifier(
+        make_linux_runtime_archive(tmp_path, architecture="ppc64le", machine=21)
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "Verified" in result.stdout
+
+
+def test_verify_runtime_archive_rejects_little_endian_ppc64_mislabel(tmp_path):
+    result = run_verifier(
+        make_linux_runtime_archive(tmp_path, architecture="ppc64", machine=21)
+    )
+
+    assert result.returncode != 0
+    assert "architecture expected 'ppc64', found ['ppc64le']" in result.stderr
+
+
 def test_verify_runtime_archive_accepts_manifest_names_for_unknown_platform(tmp_path):
     result = run_verifier(
         make_linux_runtime_archive(
