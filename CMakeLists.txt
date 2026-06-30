@@ -464,12 +464,12 @@ if (SIMPLEGRAPHIC_INSTALL_RUNTIME_DEPENDENCIES)
         PRE_EXCLUDE_REGEXES
             [[api-ms-.*]]
             [[ext-ms-.*]]
-            [[AzureAttest.*[.]dll]]
-            [[HvsiFileTrust[.]dll]]
-            [[PdmUtilities[.]dll]]
-            [[WTDSENSOR[.]dll]]
-            [[wpaxholder[.]dll]]
-            [[wtdccm[.]dll]]
+            [[^azureattest.*[.]dll$]]
+            [[^hvsifiletrust[.]dll$]]
+            [[^pdmutilities[.]dll$]]
+            [[^wtdsensor[.]dll$]]
+            [[^wpaxholder[.]dll$]]
+            [[^wtdccm[.]dll$]]
         POST_EXCLUDE_REGEXES
             [[.*[\\/]Windows[\\/]System32[\\/].*]]
             [[.*[\\/]Windows[\\/]SysWOW64[\\/].*]]

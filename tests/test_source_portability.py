@@ -756,12 +756,12 @@ def test_cmake_excludes_common_system_library_locations_from_runtime_archives() 
 
     assert "cmake_policy(SET CMP0207 NEW)" in source
     for pattern in (
-        "[[AzureAttest.*[.]dll]]",
-        "[[HvsiFileTrust[.]dll]]",
-        "[[PdmUtilities[.]dll]]",
-        "[[WTDSENSOR[.]dll]]",
-        "[[wpaxholder[.]dll]]",
-        "[[wtdccm[.]dll]]",
+        "[[^azureattest.*[.]dll$]]",
+        "[[^hvsifiletrust[.]dll$]]",
+        "[[^pdmutilities[.]dll$]]",
+        "[[^wtdsensor[.]dll$]]",
+        "[[^wpaxholder[.]dll$]]",
+        "[[^wtdccm[.]dll$]]",
         r"[[.*[\\/]Windows[\\/]System32[\\/].*]]",
         r"[[.*[\\/]Windows[\\/]SysWOW64[\\/].*]]",
         r"[[.*[\\/]Windows[\\/]WinSxS[\\/].*]]",
