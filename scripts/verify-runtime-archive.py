@@ -878,9 +878,15 @@ def is_allowed_windows_system_dependency(dependency: str) -> bool:
     )
 
 
-def is_system_dependency(platform: str, dependency: str) -> bool:
+def is_system_dependency(
+    platform: str, dependency: str, archive_system_dependencies: set[str]
+) -> bool:
     if platform == "win32":
-        return is_allowed_windows_system_dependency(dependency)
+        name = archive_dependency_name(dependency).lower()
+        return (
+            name in archive_system_dependencies
+            or is_allowed_windows_system_dependency(dependency)
+        )
     if platform == "linux":
         return is_allowed_linux_system_dependency(dependency)
     if platform == "macos":
@@ -900,9 +906,15 @@ def detect_binary_dependencies(data: bytes, platform: str) -> set[str]:
     return set()
 
 
-def validate_dependency_closure(name: str, data: bytes, platform: str, names: set[str]) -> None:
+def validate_dependency_closure(
+    name: str,
+    data: bytes,
+    platform: str,
+    names: set[str],
+    archive_system_dependencies: set[str],
+) -> None:
     for dependency in sorted(detect_binary_dependencies(data, platform)):
-        if is_system_dependency(platform, dependency):
+        if is_system_dependency(platform, dependency, archive_system_dependencies):
             continue
         if archive_contains_dependency(names, dependency, platform):
             continue
@@ -1112,6 +1124,21 @@ def require_manifest_files(value: object, archive_names: set[str]) -> list[str]:
     return files
 
 
+def require_system_dependencies(value: object) -> set[str]:
+    if value is None:
+        return set()
+    if not isinstance(value, list):
+        fail(f"{MANIFEST_NAME} field 'systemDependencies' must be a list")
+
+    dependencies: set[str] = set()
+    for item in value:
+        name = require_flat_file_name(item, "systemDependencies").lower()
+        if name in dependencies:
+            fail(f"{MANIFEST_NAME} field 'systemDependencies' contains duplicate entry {name!r}")
+        dependencies.add(name)
+    return dependencies
+
+
 def require_binary_architecture(
     name: str, data: bytes, expected_architecture: str, manifest_architecture: str
 ) -> None:
@@ -1148,6 +1175,7 @@ def validate_manifest(archive_path: pathlib.Path) -> None:
 
     lua_modules = require_lua_modules(manifest.get("luaModules"), platform)
     require_manifest_files(manifest.get("files"), names)
+    system_dependencies = require_system_dependencies(manifest.get("systemDependencies"))
 
     missing = ({entry_library, *lua_modules, MANIFEST_NAME} - names)
     if missing:
@@ -1179,7 +1207,7 @@ def validate_manifest(archive_path: pathlib.Path) -> None:
             validate_elf_relocatability(name, data)
         elif is_macho(data):
             validate_macho_relocatability(name, data)
-        validate_dependency_closure(name, data, platform, names)
+        validate_dependency_closure(name, data, platform, names, system_dependencies)
 
 
 def main(argv: list[str]) -> int:

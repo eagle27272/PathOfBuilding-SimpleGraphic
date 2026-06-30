@@ -285,6 +285,7 @@ def make_runtime_archive(
     architecture="x64",
     machine=0x8664,
     manifest_entrypoints=None,
+    manifest_system_dependencies=None,
 ):
     archive_root = tmp_path / "archive"
     archive_root.mkdir()
@@ -302,6 +303,8 @@ def make_runtime_archive(
         "entrypoints": manifest_entrypoints,
         "luaModules": LUA_MODULES,
     }
+    if manifest_system_dependencies is not None:
+        manifest["systemDependencies"] = manifest_system_dependencies
     (archive_root / "SimpleGraphic.dll").write_bytes(make_pe_x64(exports, imports, machine))
     for module in LUA_MODULES:
         (archive_root / module).write_bytes(make_pe_x64(machine=machine))
@@ -472,6 +475,20 @@ def test_verify_runtime_archive_accepts_windows_system_dependency(tmp_path):
             tmp_path,
             REQUIRED_ENTRYPOINTS,
             imports=["KERNEL32.dll", "dbghelp.dll", "FWPUCLNT.DLL"],
+        )
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "Verified" in result.stdout
+
+
+def test_verify_runtime_archive_accepts_manifest_system_dependency(tmp_path):
+    result = run_verifier(
+        make_runtime_archive(
+            tmp_path,
+            REQUIRED_ENTRYPOINTS,
+            imports=["PrunedSystem.dll"],
+            manifest_system_dependencies=["PrunedSystem.dll"],
         )
     )
 

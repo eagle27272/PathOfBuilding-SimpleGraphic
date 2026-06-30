@@ -10,6 +10,8 @@ lower_value() {
     printf '%s' "$1" | tr '[:upper:]' '[:lower:]'
 }
 
+runtime_system_dependencies=()
+
 normalize_platform() {
     local value
     value="$(lower_value "$1")"
@@ -352,6 +354,7 @@ prune_windows_system_runtime_files() {
         file_name="$(basename "$file")"
         if ! is_windows_packaged_dependency "$file_name"; then
             printf 'Removing Windows system runtime dependency %s\n' "$file_name"
+            runtime_system_dependencies+=("$(lower_value "$file_name")")
             rm -f "$file"
         fi
     done
@@ -359,6 +362,8 @@ prune_windows_system_runtime_files() {
 }
 
 write_runtime_manifest() {
+    local system_dependencies
+
     require_runtime_file "$runtime_entry_library"
     require_runtime_file "$runtime_lcurl_module"
     require_runtime_file "$runtime_lua_utf8_module"
@@ -367,6 +372,12 @@ write_runtime_manifest() {
 
     if find "$install_dir" -mindepth 1 -type d -print -quit | grep -q .; then
         die "runtime install tree must be flat: $install_dir"
+    fi
+
+    if [ "${#runtime_system_dependencies[@]}" -gt 0 ]; then
+        system_dependencies="$(printf '%s\n' "${runtime_system_dependencies[@]}" | sort -u)"
+    else
+        system_dependencies=""
     fi
 
     SIMPLEGRAPHIC_MANIFEST_TARGET="$runtime_target" \
@@ -378,6 +389,7 @@ write_runtime_manifest() {
     SIMPLEGRAPHIC_MANIFEST_LUA_UTF8_MODULE="$runtime_lua_utf8_module" \
     SIMPLEGRAPHIC_MANIFEST_SOCKET_MODULE="$runtime_socket_module" \
     SIMPLEGRAPHIC_MANIFEST_LZIP_MODULE="$runtime_lzip_module" \
+    SIMPLEGRAPHIC_MANIFEST_SYSTEM_DEPENDENCIES="$system_dependencies" \
     "$python_cmd" - "$install_dir/SimpleGraphicRuntime.json" "$install_dir" <<'PY'
 import json
 import os
@@ -391,6 +403,11 @@ files = sorted(path.name for path in install_dir.iterdir() if path.is_file())
 if manifest_name not in files:
     files.append(manifest_name)
 files = sorted(set(files))
+system_dependencies = sorted({
+    dependency.strip().lower()
+    for dependency in os.environ["SIMPLEGRAPHIC_MANIFEST_SYSTEM_DEPENDENCIES"].splitlines()
+    if dependency.strip()
+})
 manifest = {
     "schemaVersion": 1,
     "name": "SimpleGraphic",
@@ -412,6 +429,8 @@ manifest = {
     ],
     "files": files,
 }
+if system_dependencies:
+    manifest["systemDependencies"] = system_dependencies
 manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 PY
 }

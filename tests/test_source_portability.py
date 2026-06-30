@@ -144,6 +144,8 @@ def test_package_script_can_describe_future_platform_runtime_file_names() -> Non
     assert 'require_safe_file_name "$runtime_entry_library"' in source
     assert "SIMPLEGRAPHIC_MANIFEST_ENTRY_LIBRARY" in source
     assert '"entryLibrary": os.environ["SIMPLEGRAPHIC_MANIFEST_ENTRY_LIBRARY"]' in source
+    assert "SIMPLEGRAPHIC_MANIFEST_SYSTEM_DEPENDENCIES" in source
+    assert '"systemDependencies"' in source
     assert '"files": files' in source
 
 
