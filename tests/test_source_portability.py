@@ -555,7 +555,7 @@ def test_package_script_writes_windows_manifest_and_legacy_archive(tmp_path) -> 
     install_dir.mkdir()
     vcpkg_bin = vcpkg_installed_dir / "x64-windows-release" / "bin"
     vcpkg_bin.mkdir(parents=True)
-    for file_name in ("lua51.dll", "zlib1.dll", "zstd.dll"):
+    for file_name in ("lua51.dll", "zlib1.dll", "zstd.dll", "FWPUCLNT.DLL", "IPHLPAPI.DLL"):
         (vcpkg_bin / file_name).write_text(f"fake vcpkg {file_name}\n", encoding="utf-8")
     (install_dir / "stale.dll").write_text("old dll\n", encoding="utf-8")
     (install_dir / "stale.txt").write_text("old file\n", encoding="utf-8")
@@ -582,7 +582,7 @@ def test_package_script_writes_windows_manifest_and_legacy_archive(tmp_path) -> 
         "#!/bin/sh\n"
         "if [ \"${1:-}\" = \"--install\" ]; then\n"
         "  mkdir -p \"$SIMPLEGRAPHIC_INSTALL_DIR\"\n"
-        "  for file in SimpleGraphic.dll lcurl.dll lua-utf8.dll socket.dll lzip.dll zlib1.dll lua51.dll zstd.dll netlogon.dll; do\n"
+        "  for file in SimpleGraphic.dll lcurl.dll lua-utf8.dll socket.dll lzip.dll zlib1.dll lua51.dll zstd.dll FWPUCLNT.DLL IPHLPAPI.DLL netlogon.dll; do\n"
         "    printf 'fake %s\\n' \"$file\" > \"$SIMPLEGRAPHIC_INSTALL_DIR/$file\"\n"
         "  done\n"
         "fi\n",
@@ -667,6 +667,8 @@ def test_package_script_writes_windows_manifest_and_legacy_archive(tmp_path) -> 
     assert not (install_dir / "stale.txt").exists()
     assert not stale_dir.exists()
     assert (install_dir / "zstd.dll").is_file()
+    assert not (install_dir / "FWPUCLNT.DLL").exists()
+    assert not (install_dir / "IPHLPAPI.DLL").exists()
     assert not (install_dir / "netlogon.dll").exists()
     assert (archive_dir / "SimpleGraphicRuntime-win32-x64.tar").is_file()
     assert (archive_dir / "SimpleGraphicDLLs-x64-windows.tar").is_file()
@@ -678,8 +680,12 @@ def test_package_script_writes_windows_manifest_and_legacy_archive(tmp_path) -> 
     assert "./socket.dll" in tar_calls
     assert "./lzip.dll" in tar_calls
     assert "./zstd.dll" in tar_calls
+    assert "FWPUCLNT.DLL" not in tar_calls
+    assert "IPHLPAPI.DLL" not in tar_calls
     assert "netlogon.dll" not in tar_calls
     assert "stale.dll" not in tar_calls
+    assert "Removing Windows system runtime dependency FWPUCLNT.DLL" in result.stdout
+    assert "Removing Windows system runtime dependency IPHLPAPI.DLL" in result.stdout
     assert "Removing Windows system runtime dependency netlogon.dll" in result.stdout
     assert "Wrote" in result.stdout
 

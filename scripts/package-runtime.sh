@@ -311,8 +311,25 @@ runtime_file_exists() {
     [ -f "$path" ] || [ -f "$(posix_path "$path")" ]
 }
 
+is_windows_system_dependency_name() {
+    local file_name
+    file_name="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
+
+    case "$file_name" in
+        advapi32.dll|bcrypt.dll|cfgmgr32.dll|comctl32.dll|comdlg32.dll|crypt32.dll|d3d11.dll|d3d9.dll|d3dcompiler_47.dll|dbghelp.dll|dnsapi.dll|dwmapi.dll|dxgi.dll|fwpuclnt.dll|gdi32.dll|imm32.dll|iphlpapi.dll|kernel32.dll|mpr.dll|ncrypt.dll|normaliz.dll|ntdll.dll|ole32.dll|oleacc.dll|oleaut32.dll|opengl32.dll|powrprof.dll|propsys.dll|rpcrt4.dll|sechost.dll|secur32.dll|setupapi.dll|shell32.dll|shcore.dll|shlwapi.dll|user32.dll|userenv.dll|uxtheme.dll|version.dll|winhttp.dll|winmm.dll|wldap32.dll|ws2_32.dll|wtsapi32.dll)
+            return 0
+            ;;
+    esac
+
+    return 1
+}
+
 is_windows_packaged_dependency() {
     local file_name="$1"
+
+    if is_windows_system_dependency_name "$file_name"; then
+        return 1
+    fi
 
     case "$file_name" in
         "$runtime_entry_library"|"$runtime_lcurl_module"|"$runtime_lua_utf8_module"|"$runtime_socket_module"|"$runtime_lzip_module")
@@ -331,7 +348,7 @@ prune_windows_system_runtime_files() {
     shopt -s nullglob
     local file
     local file_name
-    for file in "$install_dir"/*.dll; do
+    for file in "$install_dir"/*.[dD][lL][lL]; do
         file_name="$(basename "$file")"
         if ! is_windows_packaged_dependency "$file_name"; then
             printf 'Removing Windows system runtime dependency %s\n' "$file_name"

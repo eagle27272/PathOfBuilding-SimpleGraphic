@@ -468,7 +468,11 @@ def test_verify_runtime_archive_rejects_missing_pe_dependency(tmp_path):
 
 def test_verify_runtime_archive_accepts_windows_system_dependency(tmp_path):
     result = run_verifier(
-        make_runtime_archive(tmp_path, REQUIRED_ENTRYPOINTS, imports=["KERNEL32.dll"])
+        make_runtime_archive(
+            tmp_path,
+            REQUIRED_ENTRYPOINTS,
+            imports=["KERNEL32.dll", "dbghelp.dll", "FWPUCLNT.DLL"],
+        )
     )
 
     assert result.returncode == 0, result.stderr
