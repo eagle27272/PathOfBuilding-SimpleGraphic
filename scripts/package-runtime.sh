@@ -91,6 +91,14 @@ windows_path() {
     fi
 }
 
+posix_path() {
+    if command -v cygpath >/dev/null 2>&1; then
+        cygpath -u "$1"
+    else
+        printf '%s' "$1"
+    fi
+}
+
 is_truthy() {
     case "$(lower_value "${1:-}")" in
         1|true|yes|on)
@@ -296,6 +304,41 @@ reset_directory_contents() {
     [ -n "$directory" ] || die "empty directory"
     mkdir -p "$directory"
     find "$directory" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+}
+
+runtime_file_exists() {
+    local path="$1"
+    [ -f "$path" ] || [ -f "$(posix_path "$path")" ]
+}
+
+is_windows_packaged_dependency() {
+    local file_name="$1"
+
+    case "$file_name" in
+        "$runtime_entry_library"|"$runtime_lcurl_module"|"$runtime_lua_utf8_module"|"$runtime_socket_module"|"$runtime_lzip_module")
+            return 0
+            ;;
+    esac
+
+    runtime_file_exists "$build_dir/$file_name" \
+        || runtime_file_exists "$build_dir/$build_type/$file_name" \
+        || runtime_file_exists "$vcpkg_installed_dir/$triplet/bin/$file_name"
+}
+
+prune_windows_system_runtime_files() {
+    [ "$runtime_platform" = "win32" ] || return 0
+
+    shopt -s nullglob
+    local file
+    local file_name
+    for file in "$install_dir"/*.dll; do
+        file_name="$(basename "$file")"
+        if ! is_windows_packaged_dependency "$file_name"; then
+            printf 'Removing Windows system runtime dependency %s\n' "$file_name"
+            rm -f "$file"
+        fi
+    done
+    shopt -u nullglob
 }
 
 write_runtime_manifest() {
@@ -535,6 +578,7 @@ cmake "${generator_args[@]}" "${configure_args[@]}"
 cmake --build "$build_dir" --config "$build_type"
 reset_directory_contents "$install_dir"
 cmake --install "$build_dir" --config "$build_type"
+prune_windows_system_runtime_files
 write_runtime_manifest
 
 (cd "$install_dir" && COPYFILE_DISABLE=1 tar -cvf - .) > "$runtime_archive"

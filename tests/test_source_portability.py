@@ -550,8 +550,13 @@ def test_package_script_writes_windows_manifest_and_legacy_archive(tmp_path) -> 
     calls = tmp_path / "calls.log"
     install_dir = tmp_path / "install"
     archive_dir = tmp_path / "archives"
+    vcpkg_installed_dir = tmp_path / "vcpkg-installed"
     vcpkg_root = tmp_path / "vcpkg"
     install_dir.mkdir()
+    vcpkg_bin = vcpkg_installed_dir / "x64-windows-release" / "bin"
+    vcpkg_bin.mkdir(parents=True)
+    for file_name in ("lua51.dll", "zlib1.dll", "zstd.dll"):
+        (vcpkg_bin / file_name).write_text(f"fake vcpkg {file_name}\n", encoding="utf-8")
     (install_dir / "stale.dll").write_text("old dll\n", encoding="utf-8")
     (install_dir / "stale.txt").write_text("old file\n", encoding="utf-8")
     stale_dir = install_dir / "stale-dir"
@@ -577,7 +582,7 @@ def test_package_script_writes_windows_manifest_and_legacy_archive(tmp_path) -> 
         "#!/bin/sh\n"
         "if [ \"${1:-}\" = \"--install\" ]; then\n"
         "  mkdir -p \"$SIMPLEGRAPHIC_INSTALL_DIR\"\n"
-        "  for file in SimpleGraphic.dll lcurl.dll lua-utf8.dll socket.dll lzip.dll zlib1.dll lua51.dll; do\n"
+        "  for file in SimpleGraphic.dll lcurl.dll lua-utf8.dll socket.dll lzip.dll zlib1.dll lua51.dll zstd.dll netlogon.dll; do\n"
         "    printf 'fake %s\\n' \"$file\" > \"$SIMPLEGRAPHIC_INSTALL_DIR/$file\"\n"
         "  done\n"
         "fi\n",
@@ -612,7 +617,7 @@ def test_package_script_writes_windows_manifest_and_legacy_archive(tmp_path) -> 
         "  \"buildType\": \"${SIMPLEGRAPHIC_MANIFEST_BUILD_TYPE}\",\n"
         "  \"entryLibrary\": \"${SIMPLEGRAPHIC_MANIFEST_ENTRY_LIBRARY}\",\n"
         "  \"entrypoints\": [\"RunLuaFileAsWin\", \"RunLuaFileAsConsole\"],\n"
-        "  \"files\": [\"SimpleGraphic.dll\", \"SimpleGraphicRuntime.json\", \"lcurl.dll\", \"lua-utf8.dll\", \"lua51.dll\", \"lzip.dll\", \"socket.dll\", \"zlib1.dll\"],\n"
+        "  \"files\": [\"SimpleGraphic.dll\", \"SimpleGraphicRuntime.json\", \"lcurl.dll\", \"lua-utf8.dll\", \"lua51.dll\", \"lzip.dll\", \"socket.dll\", \"zlib1.dll\", \"zstd.dll\"],\n"
         "  \"layout\": \"flat\",\n"
         "  \"luaModules\": [\"${SIMPLEGRAPHIC_MANIFEST_LCURL_MODULE}\", \"${SIMPLEGRAPHIC_MANIFEST_LUA_UTF8_MODULE}\", \"${SIMPLEGRAPHIC_MANIFEST_SOCKET_MODULE}\", \"${SIMPLEGRAPHIC_MANIFEST_LZIP_MODULE}\"],\n"
         "  \"name\": \"SimpleGraphic\",\n"
@@ -633,6 +638,7 @@ def test_package_script_writes_windows_manifest_and_legacy_archive(tmp_path) -> 
     env["PATH"] = f"{bin_dir}{os.pathsep}{env['PATH']}"
     env["SIMPLEGRAPHIC_RUNTIME_TARGET"] = "amd64-windows"
     env["SIMPLEGRAPHIC_VCPKG_ROOT"] = str(vcpkg_root)
+    env["VCPKG_INSTALLED_DIR"] = str(vcpkg_installed_dir)
     env["SIMPLEGRAPHIC_INSTALL_DIR"] = str(install_dir)
     env["SIMPLEGRAPHIC_ARCHIVE_DIR"] = str(archive_dir)
     result = subprocess.run(
@@ -656,9 +662,12 @@ def test_package_script_writes_windows_manifest_and_legacy_archive(tmp_path) -> 
     assert '"files"' in manifest
     assert '"zlib1.dll"' in manifest
     assert '"lua51.dll"' in manifest
+    assert '"zstd.dll"' in manifest
     assert not (install_dir / "stale.dll").exists()
     assert not (install_dir / "stale.txt").exists()
     assert not stale_dir.exists()
+    assert (install_dir / "zstd.dll").is_file()
+    assert not (install_dir / "netlogon.dll").exists()
     assert (archive_dir / "SimpleGraphicRuntime-win32-x64.tar").is_file()
     assert (archive_dir / "SimpleGraphicDLLs-x64-windows.tar").is_file()
     assert "tar -cvf - ." in tar_calls
@@ -668,7 +677,10 @@ def test_package_script_writes_windows_manifest_and_legacy_archive(tmp_path) -> 
     assert "./lua-utf8.dll" in tar_calls
     assert "./socket.dll" in tar_calls
     assert "./lzip.dll" in tar_calls
+    assert "./zstd.dll" in tar_calls
+    assert "netlogon.dll" not in tar_calls
     assert "stale.dll" not in tar_calls
+    assert "Removing Windows system runtime dependency netlogon.dll" in result.stdout
     assert "Wrote" in result.stdout
 
 
