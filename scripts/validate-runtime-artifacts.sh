@@ -32,14 +32,133 @@ fi
 require_legacy_windows="${SIMPLEGRAPHIC_REQUIRE_LEGACY_WINDOWS_ARCHIVE:-1}"
 supported_runtime_suffixes=(".tar" ".tar.gz" ".tgz")
 
-target_is_expected() {
+lower_value() {
+    printf '%s' "$1" | tr '[:upper:]' '[:lower:]'
+}
+
+normalize_platform() {
+    local value
+    value="$(lower_value "$1")"
+    case "$value" in
+        darwin|mac|macos|osx)
+            printf 'macos'
+            ;;
+        windows|win|win32|mingw*|msys*|cygwin*)
+            printf 'win32'
+            ;;
+        *)
+            printf '%s' "$value"
+            ;;
+    esac
+}
+
+normalize_architecture() {
+    local value
+    value="$(lower_value "$1")"
+    case "$value" in
+        arm64|aarch64)
+            printf 'arm64'
+            ;;
+        x86_64|amd64)
+            printf 'x64'
+            ;;
+        i386|i486|i586|i686)
+            printf 'x86'
+            ;;
+        armv7*|armhf)
+            printf 'armv7'
+            ;;
+        armv6*)
+            printf 'armv6'
+            ;;
+        armv5*)
+            printf 'arm'
+            ;;
+        ppc64el)
+            printf 'ppc64le'
+            ;;
+        *)
+            printf '%s' "$value"
+            ;;
+    esac
+}
+
+is_known_architecture() {
+    case "$(normalize_architecture "$1")" in
+        x64|x86|arm64|arm64ec|arm64x|arm|armv6|armv7|riscv32|riscv64|riscv128|ppc|ppc64|ppc64le|mips|mips64|s390|s390x|loongarch32|loongarch64|ia64)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+valid_target_part() {
+    case "$1" in
+        ''|.*|*/*|*\\*|*[!a-z0-9._-]*)
+            return 1
+            ;;
+        *)
+            return 0
+            ;;
+    esac
+}
+
+normalize_target() {
+    local name="$1"
+    local first
+    local second
+    local platform
+    local architecture
+
+    name="$(lower_value "$name")"
+    case "$name" in
+        *-*) ;;
+        *) return 1 ;;
+    esac
+
+    first="${name%%-*}"
+    second="${name#*-}"
+    case "$second" in
+        *-*) return 1 ;;
+    esac
+
+    valid_target_part "$first" || return 1
+    valid_target_part "$second" || return 1
+
+    if is_known_architecture "$first"; then
+        platform="$(normalize_platform "$second")"
+        architecture="$(normalize_architecture "$first")"
+    else
+        platform="$(normalize_platform "$first")"
+        architecture="$(normalize_architecture "$second")"
+    fi
+
+    valid_target_part "$platform" || return 1
+    valid_target_part "$architecture" || return 1
+    printf '%s-%s\n' "$platform" "$architecture"
+}
+
+target_in_list() {
     local candidate="$1"
     local expected
-    for expected in "${expected_targets[@]}"; do
+    shift || true
+    for expected in "$@"; do
         [ "$candidate" = "$expected" ] && return 0
     done
     return 1
 }
+
+canonical_expected_targets=()
+for target in "${expected_targets[@]}"; do
+    canonical_target="$(normalize_target "$target")" || die "unsafe expected runtime target: $target"
+    if target_in_list "$canonical_target" "${canonical_expected_targets[@]}"; then
+        die "duplicate expected runtime target: $canonical_target"
+    fi
+    canonical_expected_targets+=("$canonical_target")
+done
+expected_targets=("${canonical_expected_targets[@]}")
 
 runtime_archive_paths=()
 for suffix in "${supported_runtime_suffixes[@]}"; do
@@ -72,31 +191,24 @@ archive_target_from_path() {
     printf '%s\n' "$target"
 }
 
-for target in "${expected_targets[@]}"; do
-    case "$target" in
-        ''|.*|*/*|*\\*|*[!a-z0-9._-]*)
-            die "unsafe expected runtime target: $target"
-            ;;
-    esac
-    matching_paths=()
-    for suffix in "${supported_runtime_suffixes[@]}"; do
-        path="$artifact_dir/SimpleGraphicRuntime-$target$suffix"
-        [ -f "$path" ] || continue
-        matching_paths+=("$path")
-    done
-    [ "${#matching_paths[@]}" -gt 0 ] || die "missing runtime archive for target: $target"
-    [ "${#matching_paths[@]}" -eq 1 ] || die "duplicate runtime archives for target: $target"
-done
-
+archive_targets=()
 for path in "${runtime_archive_paths[@]}"; do
     base="$(basename -- "$path")"
     target="$(archive_target_from_path "$base")" || die "unsupported runtime archive: $base"
-    case "$target" in
-        ''|.*|*/*|*\\*|*[!a-z0-9._-]*)
-            die "unsafe runtime archive target: $base"
-            ;;
-    esac
-    target_is_expected "$target" || die "unexpected runtime archive: $base"
+    canonical_target="$(normalize_target "$target")" || die "unsafe runtime archive target: $base"
+    target_in_list "$canonical_target" "${expected_targets[@]}" || die "unexpected runtime archive: $base"
+    archive_targets+=("$canonical_target")
+done
+
+for target in "${expected_targets[@]}"; do
+    match_count=0
+    for archive_target in "${archive_targets[@]}"; do
+        if [ "$archive_target" = "$target" ]; then
+            match_count=$((match_count + 1))
+        fi
+    done
+    [ "$match_count" -gt 0 ] || die "missing runtime archive for target: $target"
+    [ "$match_count" -eq 1 ] || die "duplicate runtime archives for target: $target"
 done
 
 "$repo_dir/scripts/verify-runtime-archive.py" "${runtime_archive_paths[@]}"

@@ -205,6 +205,63 @@ def test_package_script_auto_detects_latest_windows_visual_studio_generator(tmp_
     assert "-G Visual Studio 18 2026 -A x64" in cmake_calls.read_text(encoding="utf-8")
 
 
+def test_package_script_auto_uses_installed_visual_studio_from_vswhere(tmp_path) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    cmake_calls = tmp_path / "cmake.log"
+    vcpkg_root = tmp_path / "vcpkg"
+    vcpkg_root.mkdir()
+    _write_executable(
+        vcpkg_root / "vcpkg.exe",
+        "#!/bin/sh\n"
+        "printf 'fake vcpkg\\n'\n",
+    )
+    _write_executable(
+        bin_dir / "uname",
+        "#!/bin/sh\n"
+        "if [ \"${1:-}\" = \"-s\" ]; then\n"
+        "  printf 'MINGW64_NT-10.0\\n'\n"
+        "else\n"
+        "  printf 'ARM64\\n'\n"
+        "fi\n",
+    )
+    _write_executable(
+        bin_dir / "vswhere.exe",
+        "#!/bin/sh\n"
+        "printf '17.13.36514.2\\n'\n",
+    )
+    _write_executable(
+        bin_dir / "cmake",
+        "#!/bin/sh\n"
+        "if [ \"${1:-}\" = \"-E\" ] && [ \"${2:-}\" = \"capabilities\" ]; then\n"
+        "  cat <<'JSON'\n"
+        "{\"generators\":[{\"name\":\"Visual Studio 17 2022\"},{\"name\":\"Visual Studio 18 2026\"},{\"name\":\"Ninja\"}]}\n"
+        "JSON\n"
+        "  exit 0\n"
+        "fi\n"
+        f"printf '%s\\n' \"$*\" > {cmake_calls}\n"
+        "exit 1\n",
+    )
+    _write_executable(bin_dir / "tar", "#!/bin/sh\nexit 0\n")
+
+    env = os.environ.copy()
+    env["PATH"] = f"{bin_dir}{os.pathsep}{env['PATH']}"
+    env["SIMPLEGRAPHIC_RUNTIME_TARGET"] = "win32-arm64"
+    env["SIMPLEGRAPHIC_CMAKE_GENERATOR"] = "auto"
+    env["SIMPLEGRAPHIC_CMAKE_PLATFORM"] = "ARM64"
+    env["SIMPLEGRAPHIC_VCPKG_ROOT"] = str(vcpkg_root)
+    result = subprocess.run(
+        ["bash", str(REPO_ROOT / "scripts" / "package-runtime.sh")],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    assert "Using CMake generator Visual Studio 17 2022" in result.stdout
+    assert "-G Visual Studio 17 2022 -A ARM64" in cmake_calls.read_text(encoding="utf-8")
+
+
 def test_package_script_clears_mounted_install_directory_contents() -> None:
     source = (REPO_ROOT / "scripts/package-runtime.sh").read_text(encoding="utf-8")
 
@@ -697,7 +754,14 @@ def test_lzip_checks_short_archive_reads() -> None:
 def test_cmake_excludes_common_system_library_locations_from_runtime_archives() -> None:
     source = (REPO_ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
 
+    assert "cmake_policy(SET CMP0207 NEW)" in source
     for pattern in (
+        "[[AzureAttest.*[.]dll]]",
+        "[[HvsiFileTrust[.]dll]]",
+        "[[PdmUtilities[.]dll]]",
+        "[[WTDSENSOR[.]dll]]",
+        "[[wpaxholder[.]dll]]",
+        "[[wtdccm[.]dll]]",
         r"[[.*[\\/]Windows[\\/]System32[\\/].*]]",
         r"[[.*[\\/]Windows[\\/]SysWOW64[\\/].*]]",
         r"[[.*[\\/]Windows[\\/]WinSxS[\\/].*]]",

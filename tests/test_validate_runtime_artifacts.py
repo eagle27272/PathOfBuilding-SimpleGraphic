@@ -257,6 +257,66 @@ def test_validate_runtime_artifacts_accepts_supported_compressed_archive_suffix(
     assert index["runtimeArchives"][0]["fileName"] == "SimpleGraphicRuntime-freebsd-riscv64.tgz"
 
 
+def test_validate_runtime_artifacts_accepts_architecture_alias_target(
+    tmp_path,
+) -> None:
+    repo_root = pathlib.Path(__file__).resolve().parents[1]
+    artifact_dir = tmp_path / "artifacts"
+    artifact_dir.mkdir()
+    archive_path = make_linux_runtime_archive(
+        _workspace(tmp_path, "linux-amd64"),
+        architecture="x64",
+        machine=62,
+    )
+    archive_path = _copy_archive(archive_path, artifact_dir)
+    archive_path.rename(artifact_dir / "SimpleGraphicRuntime-linux-amd64.tar")
+
+    env = os.environ.copy()
+    env["SIMPLEGRAPHIC_EXPECTED_RUNTIME_TARGETS"] = "linux-x64"
+    env["SIMPLEGRAPHIC_REQUIRE_LEGACY_WINDOWS_ARCHIVE"] = "false"
+    result = subprocess.run(
+        [str(repo_root / "scripts" / "validate-runtime-artifacts.sh"), str(artifact_dir)],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    index = json.loads((artifact_dir / "SimpleGraphicRuntime-index.json").read_text(encoding="utf-8"))
+    assert index["runtimeArchives"][0]["fileName"] == "SimpleGraphicRuntime-linux-amd64.tar"
+    assert index["runtimeArchives"][0]["target"] == "linux-x64"
+
+
+def test_validate_runtime_artifacts_accepts_architecture_first_target(
+    tmp_path,
+) -> None:
+    repo_root = pathlib.Path(__file__).resolve().parents[1]
+    artifact_dir = tmp_path / "artifacts"
+    artifact_dir.mkdir()
+    archive_path = make_linux_runtime_archive(
+        _workspace(tmp_path, "x64-linux"),
+        architecture="x64",
+        machine=62,
+    )
+    archive_path = _copy_archive(archive_path, artifact_dir)
+    archive_path.rename(artifact_dir / "SimpleGraphicRuntime-x64-linux.tar")
+
+    env = os.environ.copy()
+    env["SIMPLEGRAPHIC_EXPECTED_RUNTIME_TARGETS"] = "amd64-linux"
+    env["SIMPLEGRAPHIC_REQUIRE_LEGACY_WINDOWS_ARCHIVE"] = "false"
+    result = subprocess.run(
+        [str(repo_root / "scripts" / "validate-runtime-artifacts.sh"), str(artifact_dir)],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    index = json.loads((artifact_dir / "SimpleGraphicRuntime-index.json").read_text(encoding="utf-8"))
+    assert index["runtimeArchives"][0]["fileName"] == "SimpleGraphicRuntime-x64-linux.tar"
+    assert index["runtimeArchives"][0]["target"] == "linux-x64"
+
+
 def test_validate_runtime_artifacts_rejects_duplicate_target_archive_suffixes(
     tmp_path,
 ) -> None:
@@ -278,6 +338,28 @@ def test_validate_runtime_artifacts_rejects_duplicate_target_archive_suffixes(
 
     assert result.returncode == 1
     assert "duplicate runtime archives for target: freebsd-riscv64" in result.stderr
+    assert not (artifact_dir / "SimpleGraphicRuntime-index.json").exists()
+
+
+def test_validate_runtime_artifacts_rejects_duplicate_expected_target_aliases(
+    tmp_path,
+) -> None:
+    repo_root = pathlib.Path(__file__).resolve().parents[1]
+    artifact_dir = tmp_path / "artifacts"
+    artifact_dir.mkdir()
+
+    env = os.environ.copy()
+    env["SIMPLEGRAPHIC_EXPECTED_RUNTIME_TARGETS"] = "linux-amd64 linux-x64"
+    env["SIMPLEGRAPHIC_REQUIRE_LEGACY_WINDOWS_ARCHIVE"] = "false"
+    result = subprocess.run(
+        [str(repo_root / "scripts" / "validate-runtime-artifacts.sh"), str(artifact_dir)],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    assert "duplicate expected runtime target: linux-x64" in result.stderr
     assert not (artifact_dir / "SimpleGraphicRuntime-index.json").exists()
 
 

@@ -4,6 +4,10 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
+if (POLICY CMP0207)
+    cmake_policy(SET CMP0207 NEW)
+endif ()
+
 option(SIMPLEGRAPHIC_USE_BUNDLED_VCPKG "Use the bundled vcpkg checkout when no toolchain has already configured vcpkg." ${PROJECT_IS_TOP_LEVEL})
 option(SIMPLEGRAPHIC_INSTALL_RUNTIME_DEPENDENCIES "Install shared-library runtime dependencies next to SimpleGraphic." ON)
 
@@ -460,6 +464,12 @@ if (SIMPLEGRAPHIC_INSTALL_RUNTIME_DEPENDENCIES)
         PRE_EXCLUDE_REGEXES
             [[api-ms-.*]]
             [[ext-ms-.*]]
+            [[AzureAttest.*[.]dll]]
+            [[HvsiFileTrust[.]dll]]
+            [[PdmUtilities[.]dll]]
+            [[WTDSENSOR[.]dll]]
+            [[wpaxholder[.]dll]]
+            [[wtdccm[.]dll]]
         POST_EXCLUDE_REGEXES
             [[.*[\\/]Windows[\\/]System32[\\/].*]]
             [[.*[\\/]Windows[\\/]SysWOW64[\\/].*]]

@@ -112,7 +112,60 @@ detect_python() {
     fi
 }
 
+find_vswhere() {
+    local candidate
+    local program_files
+    local program_files_x86
+
+    program_files="$(printenv ProgramFiles 2>/dev/null || true)"
+    program_files_x86="$(printenv 'ProgramFiles(x86)' 2>/dev/null || true)"
+    for candidate in \
+            "$program_files_x86/Microsoft Visual Studio/Installer/vswhere.exe" \
+            "$program_files/Microsoft Visual Studio/Installer/vswhere.exe" \
+            "/c/Program Files (x86)/Microsoft Visual Studio/Installer/vswhere.exe" \
+            "/c/Program Files/Microsoft Visual Studio/Installer/vswhere.exe"; do
+        [ -n "$candidate" ] || continue
+        [ -f "$candidate" ] || continue
+        printf '%s\n' "$candidate"
+        return 0
+    done
+    command -v vswhere.exe 2>/dev/null || return 1
+}
+
+visual_studio_generator_for_major() {
+    case "$1" in
+        18)
+            printf 'Visual Studio 18 2026'
+            ;;
+        17)
+            printf 'Visual Studio 17 2022'
+            ;;
+        16)
+            printf 'Visual Studio 16 2019'
+            ;;
+        15)
+            printf 'Visual Studio 15 2017'
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
 detect_visual_studio_generator() {
+    local installation_version
+    local visual_studio_major
+    local vswhere
+
+    if vswhere="$(find_vswhere)"; then
+        installation_version="$("$vswhere" -latest -products '*' -requires Microsoft.Component.MSBuild -property installationVersion 2>/dev/null | tr -d '\r' | head -n 1)"
+        visual_studio_major="${installation_version%%.*}"
+        if [ -n "$visual_studio_major" ] \
+                && visual_studio_generator_for_major "$visual_studio_major"; then
+            return 0
+        fi
+    fi
+
     cmake -E capabilities | "$python_cmd" -c '
 import json
 import re

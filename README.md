@@ -127,6 +127,9 @@ When validating custom artifacts outside GitHub Actions, set
 `SIMPLEGRAPHIC_EXPECTED_RUNTIME_TARGETS` to a comma- or space-separated target
 list and set `SIMPLEGRAPHIC_REQUIRE_LEGACY_WINDOWS_ARCHIVE=0` if the validation
 set does not include the legacy Windows compatibility archive.
+Runtime archive names and expected targets are normalized before comparison, so
+aliases such as `linux-amd64`, `x64-linux`, and `darwin-aarch64` resolve to the
+same canonical targets used by the release index.
 
 The shared library depends on a number of 3rd-party libraries, all provided either as
 direct submodules and built by the main `CMakeLists.txt` file or built from
