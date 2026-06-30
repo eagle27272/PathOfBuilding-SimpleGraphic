@@ -50,7 +50,7 @@ def _workspace(tmp_path: pathlib.Path, name: str) -> pathlib.Path:
     return path
 
 
-def test_validate_runtime_artifacts_verifies_future_runtime_archives(tmp_path) -> None:
+def test_validate_runtime_artifacts_rejects_unexpected_runtime_archive(tmp_path) -> None:
     repo_root = pathlib.Path(__file__).resolve().parents[1]
     script_dir = tmp_path / "repo" / "scripts"
     script_dir.mkdir(parents=True)
@@ -95,11 +95,17 @@ def test_validate_runtime_artifacts_verifies_future_runtime_archives(tmp_path) -
 
     env = os.environ.copy()
     env["CAPTURED_ARCHIVES"] = str(capture_path)
-    subprocess.run([str(validator), str(artifact_dir)], check=True, env=env)
+    result = subprocess.run(
+        [str(validator), str(artifact_dir)],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
 
-    verified_archives = set(capture_path.read_text(encoding="utf-8").splitlines())
-    assert verified_archives == {*EXPECTED_ARCHIVES, future_archive}
-    assert (artifact_dir / "SimpleGraphicRuntime-index.json").is_file()
+    assert result.returncode == 1
+    assert f"unexpected runtime archive: {future_archive}" in result.stderr
+    assert not capture_path.exists()
+    assert not (artifact_dir / "SimpleGraphicRuntime-index.json").exists()
 
 
 def test_validate_runtime_artifacts_accepts_real_multi_platform_archive_set(tmp_path) -> None:
@@ -159,20 +165,6 @@ def test_validate_runtime_artifacts_accepts_real_multi_platform_archive_set(tmp_
         ),
         artifact_dir,
     )
-    future_archive = make_linux_runtime_archive(
-        _workspace(tmp_path, "freebsd-riscv64"),
-        platform="freebsd",
-        architecture="riscv64",
-        machine=243,
-        entry_library="SimpleGraphic.native",
-        lua_modules=[
-            "lcurl.native",
-            "lua-utf8.native",
-            "socket.native",
-            "lzip.native",
-        ],
-    )
-    _copy_archive(future_archive, artifact_dir)
     _write_legacy_windows_archive(artifact_dir / "SimpleGraphicDLLs-x64-windows.tar")
 
     result = subprocess.run(
@@ -188,7 +180,6 @@ def test_validate_runtime_artifacts_accepts_real_multi_platform_archive_set(tmp_
     index = json.loads(runtime_index.read_text(encoding="utf-8"))
     assert {entry["target"] for entry in index["runtimeArchives"]} == {
         *[archive.removeprefix("SimpleGraphicRuntime-").removesuffix(".tar") for archive in EXPECTED_ARCHIVES],
-        "freebsd-riscv64",
     }
     assert index["legacyArchives"][0]["fileName"] == "SimpleGraphicDLLs-x64-windows.tar"
 
@@ -248,6 +239,27 @@ def test_validate_runtime_artifacts_rejects_unsafe_custom_expected_target(
 
     assert result.returncode == 1
     assert "unsafe expected runtime target" in result.stderr
+
+
+def test_validate_runtime_artifacts_rejects_empty_custom_expected_target_set(
+    tmp_path,
+) -> None:
+    repo_root = pathlib.Path(__file__).resolve().parents[1]
+    artifact_dir = tmp_path / "artifacts"
+    artifact_dir.mkdir()
+
+    env = os.environ.copy()
+    env["SIMPLEGRAPHIC_EXPECTED_RUNTIME_TARGETS"] = ",,,"
+    env["SIMPLEGRAPHIC_REQUIRE_LEGACY_WINDOWS_ARCHIVE"] = "false"
+    result = subprocess.run(
+        [str(repo_root / "scripts" / "validate-runtime-artifacts.sh"), str(artifact_dir)],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    assert "expected runtime target list is empty" in result.stderr
 
 
 def test_validate_runtime_artifacts_rejects_incomplete_legacy_windows_archive(

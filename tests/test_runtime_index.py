@@ -85,6 +85,8 @@ def test_write_runtime_index_records_release_archive_contract(tmp_path) -> None:
     assert macos_entry["entryLibrary"] == "libSimpleGraphic.dylib"
     assert set(macos_entry["entrypoints"]) == set(REQUIRED_ENTRYPOINTS)
     assert macos_entry["luaModules"] == POSIX_LUA_MODULES
+    assert "SimpleGraphicRuntime.json" in macos_entry["files"]
+    assert "libSimpleGraphic.dylib" in macos_entry["files"]
     assert macos_entry["size"] == macos_target.stat().st_size
     assert macos_entry["sha256"] == _sha256(macos_target)
 
@@ -113,6 +115,7 @@ def test_write_runtime_index_rejects_manifest_target_mismatch(tmp_path) -> None:
         "entryLibrary": "libSimpleGraphic.so",
         "entrypoints": sorted(REQUIRED_ENTRYPOINTS),
         "luaModules": POSIX_LUA_MODULES,
+        "files": ["SimpleGraphicRuntime.json"],
     }
     (archive_root / "SimpleGraphicRuntime.json").write_text(
         json.dumps(manifest),
@@ -155,6 +158,7 @@ def test_write_runtime_index_rejects_unsafe_archive_link(tmp_path) -> None:
         "entryLibrary": "libSimpleGraphic.dylib",
         "entrypoints": sorted(REQUIRED_ENTRYPOINTS),
         "luaModules": POSIX_LUA_MODULES,
+        "files": ["SimpleGraphicRuntime.json"],
     }
     (archive_root / "SimpleGraphicRuntime.json").write_text(
         json.dumps(manifest),
@@ -183,6 +187,568 @@ def test_write_runtime_index_rejects_unsafe_archive_link(tmp_path) -> None:
     assert "contains unsafe link: linked -> ../outside" in result.stderr
 
 
+def test_write_runtime_index_rejects_files_metadata_mismatch(tmp_path) -> None:
+    repo_root = pathlib.Path(__file__).resolve().parents[1]
+    artifact_dir = tmp_path / "artifacts"
+    archive_root = tmp_path / "archive"
+    artifact_dir.mkdir()
+    archive_root.mkdir()
+
+    manifest = {
+        "schemaVersion": 1,
+        "name": "SimpleGraphic",
+        "target": "macos-arm64",
+        "platform": "macos",
+        "architecture": "arm64",
+        "buildType": "Release",
+        "layout": "flat",
+        "entryLibrary": "libSimpleGraphic.dylib",
+        "entrypoints": sorted(REQUIRED_ENTRYPOINTS),
+        "luaModules": POSIX_LUA_MODULES,
+        "files": ["SimpleGraphicRuntime.json"],
+    }
+    (archive_root / "SimpleGraphicRuntime.json").write_text(
+        json.dumps(manifest),
+        encoding="utf-8",
+    )
+    (archive_root / "libSimpleGraphic.dylib").write_text("runtime", encoding="utf-8")
+    archive_path = artifact_dir / "SimpleGraphicRuntime-macos-arm64.tar"
+    with tarfile.open(archive_path, "w") as archive:
+        archive.add(archive_root / "SimpleGraphicRuntime.json", arcname="SimpleGraphicRuntime.json")
+        archive.add(archive_root / "libSimpleGraphic.dylib", arcname="libSimpleGraphic.dylib")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(repo_root / "scripts" / "write-runtime-index.py"),
+            "--artifact-dir",
+            str(artifact_dir),
+        ],
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    assert "manifest field 'files' must match archive files" in result.stderr
+
+
+def test_write_runtime_index_rejects_duplicate_files_metadata(tmp_path) -> None:
+    repo_root = pathlib.Path(__file__).resolve().parents[1]
+    artifact_dir = tmp_path / "artifacts"
+    archive_root = tmp_path / "archive"
+    artifact_dir.mkdir()
+    archive_root.mkdir()
+
+    manifest = {
+        "schemaVersion": 1,
+        "name": "SimpleGraphic",
+        "target": "macos-arm64",
+        "platform": "macos",
+        "architecture": "arm64",
+        "buildType": "Release",
+        "layout": "flat",
+        "entryLibrary": "libSimpleGraphic.dylib",
+        "entrypoints": sorted(REQUIRED_ENTRYPOINTS),
+        "luaModules": POSIX_LUA_MODULES,
+        "files": [
+            "SimpleGraphicRuntime.json",
+            "libSimpleGraphic.dylib",
+            "libSimpleGraphic.dylib",
+        ],
+    }
+    (archive_root / "SimpleGraphicRuntime.json").write_text(
+        json.dumps(manifest),
+        encoding="utf-8",
+    )
+    (archive_root / "libSimpleGraphic.dylib").write_text("runtime", encoding="utf-8")
+    archive_path = artifact_dir / "SimpleGraphicRuntime-macos-arm64.tar"
+    with tarfile.open(archive_path, "w") as archive:
+        archive.add(archive_root / "SimpleGraphicRuntime.json", arcname="SimpleGraphicRuntime.json")
+        archive.add(archive_root / "libSimpleGraphic.dylib", arcname="libSimpleGraphic.dylib")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(repo_root / "scripts" / "write-runtime-index.py"),
+            "--artifact-dir",
+            str(artifact_dir),
+        ],
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    assert "manifest field 'files' contains duplicate entry 'libSimpleGraphic.dylib'" in result.stderr
+
+
+def test_write_runtime_index_rejects_path_like_entry_library(tmp_path) -> None:
+    repo_root = pathlib.Path(__file__).resolve().parents[1]
+    artifact_dir = tmp_path / "artifacts"
+    archive_root = tmp_path / "archive"
+    artifact_dir.mkdir()
+    archive_root.mkdir()
+
+    manifest = {
+        "schemaVersion": 1,
+        "name": "SimpleGraphic",
+        "target": "macos-arm64",
+        "platform": "macos",
+        "architecture": "arm64",
+        "buildType": "Release",
+        "layout": "flat",
+        "entryLibrary": "Frameworks/libSimpleGraphic.dylib",
+        "entrypoints": sorted(REQUIRED_ENTRYPOINTS),
+        "luaModules": POSIX_LUA_MODULES,
+        "files": ["SimpleGraphicRuntime.json"],
+    }
+    (archive_root / "SimpleGraphicRuntime.json").write_text(
+        json.dumps(manifest),
+        encoding="utf-8",
+    )
+    archive_path = artifact_dir / "SimpleGraphicRuntime-macos-arm64.tar"
+    with tarfile.open(archive_path, "w") as archive:
+        archive.add(archive_root / "SimpleGraphicRuntime.json", arcname="SimpleGraphicRuntime.json")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(repo_root / "scripts" / "write-runtime-index.py"),
+            "--artifact-dir",
+            str(artifact_dir),
+        ],
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    assert "manifest field 'entryLibrary' must be a flat file name" in result.stderr
+
+
+def test_write_runtime_index_rejects_non_flat_layout(tmp_path) -> None:
+    repo_root = pathlib.Path(__file__).resolve().parents[1]
+    artifact_dir = tmp_path / "artifacts"
+    archive_root = tmp_path / "archive"
+    artifact_dir.mkdir()
+    archive_root.mkdir()
+
+    manifest = {
+        "schemaVersion": 1,
+        "name": "SimpleGraphic",
+        "target": "macos-arm64",
+        "platform": "macos",
+        "architecture": "arm64",
+        "buildType": "Release",
+        "layout": "bundle",
+        "entryLibrary": "libSimpleGraphic.dylib",
+        "entrypoints": sorted(REQUIRED_ENTRYPOINTS),
+        "luaModules": POSIX_LUA_MODULES,
+        "files": ["SimpleGraphicRuntime.json"],
+    }
+    (archive_root / "SimpleGraphicRuntime.json").write_text(
+        json.dumps(manifest),
+        encoding="utf-8",
+    )
+    archive_path = artifact_dir / "SimpleGraphicRuntime-macos-arm64.tar"
+    with tarfile.open(archive_path, "w") as archive:
+        archive.add(archive_root / "SimpleGraphicRuntime.json", arcname="SimpleGraphicRuntime.json")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(repo_root / "scripts" / "write-runtime-index.py"),
+            "--artifact-dir",
+            str(artifact_dir),
+        ],
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    assert "manifest field 'layout' expected 'flat'" in result.stderr
+
+
+def test_write_runtime_index_rejects_wrong_known_platform_entry_library(tmp_path) -> None:
+    repo_root = pathlib.Path(__file__).resolve().parents[1]
+    artifact_dir = tmp_path / "artifacts"
+    archive_root = tmp_path / "archive"
+    artifact_dir.mkdir()
+    archive_root.mkdir()
+
+    manifest = {
+        "schemaVersion": 1,
+        "name": "SimpleGraphic",
+        "target": "macos-arm64",
+        "platform": "macos",
+        "architecture": "arm64",
+        "buildType": "Release",
+        "layout": "flat",
+        "entryLibrary": "SimpleGraphic.native",
+        "entrypoints": sorted(REQUIRED_ENTRYPOINTS),
+        "luaModules": POSIX_LUA_MODULES,
+        "files": ["SimpleGraphicRuntime.json"],
+    }
+    (archive_root / "SimpleGraphicRuntime.json").write_text(
+        json.dumps(manifest),
+        encoding="utf-8",
+    )
+    archive_path = artifact_dir / "SimpleGraphicRuntime-macos-arm64.tar"
+    with tarfile.open(archive_path, "w") as archive:
+        archive.add(archive_root / "SimpleGraphicRuntime.json", arcname="SimpleGraphicRuntime.json")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(repo_root / "scripts" / "write-runtime-index.py"),
+            "--artifact-dir",
+            str(artifact_dir),
+        ],
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    assert "manifest field 'entryLibrary' expected 'libSimpleGraphic.dylib'" in result.stderr
+
+
+def test_write_runtime_index_rejects_extra_manifest_entrypoint(tmp_path) -> None:
+    repo_root = pathlib.Path(__file__).resolve().parents[1]
+    artifact_dir = tmp_path / "artifacts"
+    archive_root = tmp_path / "archive"
+    artifact_dir.mkdir()
+    archive_root.mkdir()
+
+    manifest = {
+        "schemaVersion": 1,
+        "name": "SimpleGraphic",
+        "target": "macos-arm64",
+        "platform": "macos",
+        "architecture": "arm64",
+        "buildType": "Release",
+        "layout": "flat",
+        "entryLibrary": "libSimpleGraphic.dylib",
+        "entrypoints": [*sorted(REQUIRED_ENTRYPOINTS), "RunExperimental"],
+        "luaModules": POSIX_LUA_MODULES,
+        "files": ["SimpleGraphicRuntime.json"],
+    }
+    (archive_root / "SimpleGraphicRuntime.json").write_text(
+        json.dumps(manifest),
+        encoding="utf-8",
+    )
+    archive_path = artifact_dir / "SimpleGraphicRuntime-macos-arm64.tar"
+    with tarfile.open(archive_path, "w") as archive:
+        archive.add(archive_root / "SimpleGraphicRuntime.json", arcname="SimpleGraphicRuntime.json")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(repo_root / "scripts" / "write-runtime-index.py"),
+            "--artifact-dir",
+            str(artifact_dir),
+        ],
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    assert "manifest must list only entrypoints" in result.stderr
+
+
+def test_write_runtime_index_rejects_duplicate_manifest_entrypoint(tmp_path) -> None:
+    repo_root = pathlib.Path(__file__).resolve().parents[1]
+    artifact_dir = tmp_path / "artifacts"
+    archive_root = tmp_path / "archive"
+    artifact_dir.mkdir()
+    archive_root.mkdir()
+
+    manifest = {
+        "schemaVersion": 1,
+        "name": "SimpleGraphic",
+        "target": "macos-arm64",
+        "platform": "macos",
+        "architecture": "arm64",
+        "buildType": "Release",
+        "layout": "flat",
+        "entryLibrary": "libSimpleGraphic.dylib",
+        "entrypoints": [
+            "RunLuaFileAsWin",
+            "RunLuaFileAsConsole",
+            "RunLuaFileAsConsole",
+        ],
+        "luaModules": POSIX_LUA_MODULES,
+        "files": ["SimpleGraphicRuntime.json"],
+    }
+    (archive_root / "SimpleGraphicRuntime.json").write_text(
+        json.dumps(manifest),
+        encoding="utf-8",
+    )
+    archive_path = artifact_dir / "SimpleGraphicRuntime-macos-arm64.tar"
+    with tarfile.open(archive_path, "w") as archive:
+        archive.add(archive_root / "SimpleGraphicRuntime.json", arcname="SimpleGraphicRuntime.json")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(repo_root / "scripts" / "write-runtime-index.py"),
+            "--artifact-dir",
+            str(artifact_dir),
+        ],
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    assert "manifest field 'entrypoints' contains duplicate entry 'RunLuaFileAsConsole'" in result.stderr
+
+
+def test_write_runtime_index_rejects_wrong_known_platform_lua_modules(tmp_path) -> None:
+    repo_root = pathlib.Path(__file__).resolve().parents[1]
+    artifact_dir = tmp_path / "artifacts"
+    archive_root = tmp_path / "archive"
+    artifact_dir.mkdir()
+    archive_root.mkdir()
+
+    manifest = {
+        "schemaVersion": 1,
+        "name": "SimpleGraphic",
+        "target": "macos-arm64",
+        "platform": "macos",
+        "architecture": "arm64",
+        "buildType": "Release",
+        "layout": "flat",
+        "entryLibrary": "libSimpleGraphic.dylib",
+        "entrypoints": sorted(REQUIRED_ENTRYPOINTS),
+        "luaModules": ["lcurl.dylib", "lua-utf8.so", "socket.so", "lzip.so"],
+        "files": ["SimpleGraphicRuntime.json"],
+    }
+    (archive_root / "SimpleGraphicRuntime.json").write_text(
+        json.dumps(manifest),
+        encoding="utf-8",
+    )
+    archive_path = artifact_dir / "SimpleGraphicRuntime-macos-arm64.tar"
+    with tarfile.open(archive_path, "w") as archive:
+        archive.add(archive_root / "SimpleGraphicRuntime.json", arcname="SimpleGraphicRuntime.json")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(repo_root / "scripts" / "write-runtime-index.py"),
+            "--artifact-dir",
+            str(artifact_dir),
+        ],
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    assert "manifest must list Lua modules" in result.stderr
+
+
+def test_write_runtime_index_accepts_future_platform_module_file_names(tmp_path) -> None:
+    repo_root = pathlib.Path(__file__).resolve().parents[1]
+    artifact_dir = tmp_path / "artifacts"
+    archive_root = tmp_path / "archive"
+    artifact_dir.mkdir()
+    archive_root.mkdir()
+
+    modules = ["lcurl.native", "lua-utf8.native", "socket.native", "lzip.native"]
+    manifest = {
+        "schemaVersion": 1,
+        "name": "SimpleGraphic",
+        "target": "freebsd-riscv64",
+        "platform": "freebsd",
+        "architecture": "riscv64",
+        "buildType": "Release",
+        "layout": "flat",
+        "entryLibrary": "SimpleGraphic.native",
+        "entrypoints": sorted(REQUIRED_ENTRYPOINTS),
+        "luaModules": modules,
+        "files": [
+            "SimpleGraphicRuntime.json",
+            "SimpleGraphic.native",
+            *modules,
+        ],
+    }
+    (archive_root / "SimpleGraphicRuntime.json").write_text(
+        json.dumps(manifest),
+        encoding="utf-8",
+    )
+    (archive_root / "SimpleGraphic.native").write_text("runtime", encoding="utf-8")
+    for module in modules:
+        (archive_root / module).write_text("module", encoding="utf-8")
+    archive_path = artifact_dir / "SimpleGraphicRuntime-freebsd-riscv64.tar"
+    with tarfile.open(archive_path, "w") as archive:
+        for path in archive_root.iterdir():
+            archive.add(path, arcname=path.name)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(repo_root / "scripts" / "write-runtime-index.py"),
+            "--artifact-dir",
+            str(artifact_dir),
+        ],
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    index = json.loads(result.stdout)
+    entry = index["runtimeArchives"][0]
+    assert entry["target"] == "freebsd-riscv64"
+    assert entry["entryLibrary"] == "SimpleGraphic.native"
+    assert entry["luaModules"] == modules
+
+
+def test_write_runtime_index_rejects_future_platform_wrong_lua_module_basenames(tmp_path) -> None:
+    repo_root = pathlib.Path(__file__).resolve().parents[1]
+    artifact_dir = tmp_path / "artifacts"
+    archive_root = tmp_path / "archive"
+    artifact_dir.mkdir()
+    archive_root.mkdir()
+
+    modules = ["lcurl.native", "lua-utf8.native", "socket.native", "socket.alt"]
+    manifest = {
+        "schemaVersion": 1,
+        "name": "SimpleGraphic",
+        "target": "freebsd-riscv64",
+        "platform": "freebsd",
+        "architecture": "riscv64",
+        "buildType": "Release",
+        "layout": "flat",
+        "entryLibrary": "SimpleGraphic.native",
+        "entrypoints": sorted(REQUIRED_ENTRYPOINTS),
+        "luaModules": modules,
+        "files": [
+            "SimpleGraphicRuntime.json",
+            "SimpleGraphic.native",
+            *modules,
+        ],
+    }
+    (archive_root / "SimpleGraphicRuntime.json").write_text(
+        json.dumps(manifest),
+        encoding="utf-8",
+    )
+    (archive_root / "SimpleGraphic.native").write_text("runtime", encoding="utf-8")
+    for module in modules:
+        (archive_root / module).write_text("module", encoding="utf-8")
+    archive_path = artifact_dir / "SimpleGraphicRuntime-freebsd-riscv64.tar"
+    with tarfile.open(archive_path, "w") as archive:
+        for path in archive_root.iterdir():
+            archive.add(path, arcname=path.name)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(repo_root / "scripts" / "write-runtime-index.py"),
+            "--artifact-dir",
+            str(artifact_dir),
+        ],
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    assert "duplicate module base names ['socket']" in result.stderr
+
+
+def test_write_runtime_index_rejects_missing_declared_runtime_files(tmp_path) -> None:
+    repo_root = pathlib.Path(__file__).resolve().parents[1]
+    artifact_dir = tmp_path / "artifacts"
+    archive_root = tmp_path / "archive"
+    artifact_dir.mkdir()
+    archive_root.mkdir()
+
+    manifest = {
+        "schemaVersion": 1,
+        "name": "SimpleGraphic",
+        "target": "macos-arm64",
+        "platform": "macos",
+        "architecture": "arm64",
+        "buildType": "Release",
+        "layout": "flat",
+        "entryLibrary": "libSimpleGraphic.dylib",
+        "entrypoints": sorted(REQUIRED_ENTRYPOINTS),
+        "luaModules": POSIX_LUA_MODULES,
+        "files": ["SimpleGraphicRuntime.json"],
+    }
+    (archive_root / "SimpleGraphicRuntime.json").write_text(
+        json.dumps(manifest),
+        encoding="utf-8",
+    )
+    archive_path = artifact_dir / "SimpleGraphicRuntime-macos-arm64.tar"
+    with tarfile.open(archive_path, "w") as archive:
+        archive.add(archive_root / "SimpleGraphicRuntime.json", arcname="SimpleGraphicRuntime.json")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(repo_root / "scripts" / "write-runtime-index.py"),
+            "--artifact-dir",
+            str(artifact_dir),
+        ],
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    assert "is missing required regular files" in result.stderr
+
+
+def test_write_runtime_index_rejects_required_symlink_runtime_files(tmp_path) -> None:
+    repo_root = pathlib.Path(__file__).resolve().parents[1]
+    artifact_dir = tmp_path / "artifacts"
+    archive_root = tmp_path / "archive"
+    artifact_dir.mkdir()
+    archive_root.mkdir()
+
+    manifest = {
+        "schemaVersion": 1,
+        "name": "SimpleGraphic",
+        "target": "macos-arm64",
+        "platform": "macos",
+        "architecture": "arm64",
+        "buildType": "Release",
+        "layout": "flat",
+        "entryLibrary": "libSimpleGraphic.dylib",
+        "entrypoints": sorted(REQUIRED_ENTRYPOINTS),
+        "luaModules": POSIX_LUA_MODULES,
+        "files": [
+            "SimpleGraphicRuntime.json",
+            "libSimpleGraphic.dylib",
+            *POSIX_LUA_MODULES,
+        ],
+    }
+    (archive_root / "SimpleGraphicRuntime.json").write_text(
+        json.dumps(manifest),
+        encoding="utf-8",
+    )
+    for module in POSIX_LUA_MODULES:
+        (archive_root / module).write_text("module", encoding="utf-8")
+    archive_path = artifact_dir / "SimpleGraphicRuntime-macos-arm64.tar"
+    with tarfile.open(archive_path, "w") as archive:
+        archive.add(archive_root / "SimpleGraphicRuntime.json", arcname="SimpleGraphicRuntime.json")
+        link = tarfile.TarInfo("libSimpleGraphic.dylib")
+        link.type = tarfile.SYMTYPE
+        link.linkname = "libSimpleGraphic.real.dylib"
+        archive.addfile(link)
+        for module in POSIX_LUA_MODULES:
+            archive.add(archive_root / module, arcname=module)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(repo_root / "scripts" / "write-runtime-index.py"),
+            "--artifact-dir",
+            str(artifact_dir),
+        ],
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    assert "is missing required regular files: libSimpleGraphic.dylib" in result.stderr
+
+
 def test_write_runtime_index_rejects_duplicate_runtime_target(tmp_path) -> None:
     repo_root = pathlib.Path(__file__).resolve().parents[1]
     artifact_dir = tmp_path / "artifacts"
@@ -201,17 +767,26 @@ def test_write_runtime_index_rejects_duplicate_runtime_target(tmp_path) -> None:
         "entryLibrary": "libSimpleGraphic.dylib",
         "entrypoints": sorted(REQUIRED_ENTRYPOINTS),
         "luaModules": POSIX_LUA_MODULES,
+        "files": [
+            "SimpleGraphicRuntime.json",
+            "libSimpleGraphic.dylib",
+            *POSIX_LUA_MODULES,
+        ],
     }
     (archive_root / "SimpleGraphicRuntime.json").write_text(
         json.dumps(manifest),
         encoding="utf-8",
     )
+    (archive_root / "libSimpleGraphic.dylib").write_text("runtime", encoding="utf-8")
+    for module in POSIX_LUA_MODULES:
+        (archive_root / module).write_text("module", encoding="utf-8")
     for archive_name in (
         "SimpleGraphicRuntime-macos-arm64.tar",
         "SimpleGraphicRuntime-macos-arm64.tgz",
     ):
         with tarfile.open(artifact_dir / archive_name, "w") as archive:
-            archive.add(archive_root / "SimpleGraphicRuntime.json", arcname="SimpleGraphicRuntime.json")
+            for path in archive_root.iterdir():
+                archive.add(path, arcname=path.name)
 
     result = subprocess.run(
         [

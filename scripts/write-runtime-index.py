@@ -9,6 +9,8 @@ import tarfile
 MANIFEST_NAME = "SimpleGraphicRuntime.json"
 RUNTIME_PREFIX = "SimpleGraphicRuntime-"
 LEGACY_WINDOWS_ARCHIVE = "SimpleGraphicDLLs-x64-windows.tar"
+REQUIRED_ENTRYPOINTS = {"RunLuaFileAsWin", "RunLuaFileAsConsole"}
+MODULE_BASENAMES = ("lcurl", "lua-utf8", "socket", "lzip")
 
 KNOWN_ARCHITECTURES = {
     "x64",
@@ -128,8 +130,10 @@ def clean_member_name(member: tarfile.TarInfo, archive_path: pathlib.Path) -> st
     return "" if clean in ("", ".") else clean.rstrip("/")
 
 
-def validate_archive_members(path: pathlib.Path, members: list[tarfile.TarInfo]) -> None:
+def validate_archive_members(path: pathlib.Path, members: list[tarfile.TarInfo]) -> tuple[set[str], set[str]]:
     link_member_paths: set[pathlib.PurePosixPath] = set()
+    names: set[str] = set()
+    regular_files: set[str] = set()
     for member in members:
         member_path = pathlib.PurePosixPath(member.name)
         clean = clean_member_name(member, path)
@@ -150,6 +154,9 @@ def validate_archive_members(path: pathlib.Path, members: list[tarfile.TarInfo])
             fail(f"{path.name} must not contain directories: {member.name}")
         if "/" in clean:
             fail(f"{path.name} must be flat: {member.name}")
+        names.add(clean)
+        if member.isfile():
+            regular_files.add(clean)
 
     for member in members:
         member_path = pathlib.PurePosixPath(member.name)
@@ -159,12 +166,13 @@ def validate_archive_members(path: pathlib.Path, members: list[tarfile.TarInfo])
                     f"{path.name} contains member that would extract through "
                     f"link {link_member_path}: {member.name}"
                 )
+    return names, regular_files
 
 
-def read_runtime_manifest(path: pathlib.Path) -> dict:
+def read_runtime_manifest(path: pathlib.Path) -> tuple[dict, set[str], set[str]]:
     with tarfile.open(path) as archive:
         members = archive.getmembers()
-        validate_archive_members(path, members)
+        names, regular_files = validate_archive_members(path, members)
         manifest_members = [
             member
             for member in members
@@ -172,6 +180,8 @@ def read_runtime_manifest(path: pathlib.Path) -> dict:
         ]
         if len(manifest_members) != 1:
             fail(f"{path.name} must contain exactly one {MANIFEST_NAME}")
+        if not manifest_members[0].isfile():
+            fail(f"{path.name} {MANIFEST_NAME} must be a regular file")
         manifest_file = archive.extractfile(manifest_members[0])
         if manifest_file is None:
             fail(f"{path.name} {MANIFEST_NAME} is not a regular file")
@@ -181,13 +191,23 @@ def read_runtime_manifest(path: pathlib.Path) -> dict:
             fail(f"{path.name} has invalid {MANIFEST_NAME}: {exc}")
     if not isinstance(manifest, dict):
         fail(f"{path.name} {MANIFEST_NAME} must be a JSON object")
-    return manifest
+    return manifest, names, regular_files
 
 
 def require_manifest_value(manifest: dict, path: pathlib.Path, key: str, expected: object) -> None:
     actual = manifest.get(key)
     if actual != expected:
         fail(f"{path.name} manifest field {key!r} expected {expected!r}, got {actual!r}")
+
+
+def require_manifest_flat_file_name(manifest: dict, path: pathlib.Path, key: str) -> str:
+    value = manifest.get(key)
+    if not isinstance(value, str) or not value:
+        fail(f"{path.name} manifest field {key!r} must be a non-empty string")
+    file_path = pathlib.PurePosixPath(value)
+    if "\\" in value or file_path.is_absolute() or len(file_path.parts) != 1 or file_path.name in (".", ".."):
+        fail(f"{path.name} manifest field {key!r} must be a flat file name: {value}")
+    return file_path.name
 
 
 def require_manifest_list(manifest: dict, path: pathlib.Path, key: str) -> list[str]:
@@ -197,9 +217,88 @@ def require_manifest_list(manifest: dict, path: pathlib.Path, key: str) -> list[
     return value
 
 
+def require_manifest_flat_file_list(manifest: dict, path: pathlib.Path, key: str) -> list[str]:
+    value = require_manifest_list(manifest, path, key)
+    names: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        file_path = pathlib.PurePosixPath(item)
+        if "\\" in item or file_path.is_absolute() or len(file_path.parts) != 1 or file_path.name in (".", ".."):
+            fail(f"{path.name} manifest field {key!r} must contain flat file names: {item}")
+        name = file_path.name
+        if name in seen:
+            fail(f"{path.name} manifest field {key!r} contains duplicate entry {name!r}")
+        seen.add(name)
+        names.append(name)
+    return names
+
+
+def lua_module_basename(module: str) -> str:
+    return module.split(".", 1)[0]
+
+
+def expected_entry_library(platform: str) -> str | None:
+    if platform == "win32":
+        return "SimpleGraphic.dll"
+    if platform == "macos":
+        return "libSimpleGraphic.dylib"
+    if platform == "linux":
+        return "libSimpleGraphic.so"
+    return None
+
+
+def expected_lua_modules(platform: str) -> tuple[str, ...] | None:
+    if platform == "win32":
+        return tuple(f"{name}.dll" for name in MODULE_BASENAMES)
+    if platform in ("linux", "macos"):
+        return tuple(f"{name}.so" for name in MODULE_BASENAMES)
+    return None
+
+
+def require_manifest_entrypoints(manifest: dict, path: pathlib.Path) -> list[str]:
+    entrypoints = require_manifest_list(manifest, path, "entrypoints")
+    seen: set[str] = set()
+    for entrypoint in entrypoints:
+        if not entrypoint:
+            fail(f"{path.name} manifest field 'entrypoints' must contain non-empty strings")
+        if entrypoint in seen:
+            fail(f"{path.name} manifest field 'entrypoints' contains duplicate entry {entrypoint!r}")
+        seen.add(entrypoint)
+    if seen != REQUIRED_ENTRYPOINTS or len(entrypoints) != len(REQUIRED_ENTRYPOINTS):
+        fail(f"{path.name} manifest must list only entrypoints {sorted(REQUIRED_ENTRYPOINTS)}")
+    return entrypoints
+
+
+def require_manifest_lua_modules(manifest: dict, path: pathlib.Path, platform: str) -> list[str]:
+    lua_modules = require_manifest_flat_file_list(manifest, path, "luaModules")
+
+    platform_lua_modules = expected_lua_modules(platform)
+    if platform_lua_modules is not None:
+        expected_modules = set(platform_lua_modules)
+        if set(lua_modules) != expected_modules or len(lua_modules) != len(platform_lua_modules):
+            fail(f"{path.name} manifest must list Lua modules {sorted(expected_modules)}")
+        return lua_modules
+
+    basenames = [lua_module_basename(module) for module in lua_modules]
+    duplicate_basenames = sorted(
+        basename for basename in set(basenames) if basenames.count(basename) > 1
+    )
+    if duplicate_basenames:
+        fail(
+            f"{path.name} manifest field 'luaModules' contains duplicate module base names "
+            f"{duplicate_basenames}"
+        )
+
+    expected_basenames = set(MODULE_BASENAMES)
+    if set(basenames) != expected_basenames or len(basenames) != len(MODULE_BASENAMES):
+        fail(f"{path.name} manifest must list Lua modules {sorted(MODULE_BASENAMES)}")
+
+    return lua_modules
+
+
 def runtime_archive_entry(path: pathlib.Path) -> dict:
     target, platform, architecture = split_runtime_archive_target(path)
-    manifest = read_runtime_manifest(path)
+    manifest, names, regular_files = read_runtime_manifest(path)
 
     require_manifest_value(manifest, path, "schemaVersion", 1)
     require_manifest_value(manifest, path, "name", "SimpleGraphic")
@@ -207,17 +306,38 @@ def runtime_archive_entry(path: pathlib.Path) -> dict:
     require_manifest_value(manifest, path, "platform", platform)
     require_manifest_value(manifest, path, "architecture", architecture)
 
-    entry_library = manifest.get("entryLibrary")
-    if not isinstance(entry_library, str) or not entry_library:
-        fail(f"{path.name} manifest field 'entryLibrary' must be a non-empty string")
+    entry_library = require_manifest_flat_file_name(manifest, path, "entryLibrary")
+    platform_entry_library = expected_entry_library(platform)
+    if platform_entry_library is not None and entry_library != platform_entry_library:
+        fail(
+            f"{path.name} manifest field 'entryLibrary' expected "
+            f"{platform_entry_library!r}, got {entry_library!r}"
+        )
 
     build_type = manifest.get("buildType")
     if not isinstance(build_type, str) or not build_type:
         fail(f"{path.name} manifest field 'buildType' must be a non-empty string")
 
-    layout = manifest.get("layout")
-    if not isinstance(layout, str) or not layout:
-        fail(f"{path.name} manifest field 'layout' must be a non-empty string")
+    require_manifest_value(manifest, path, "layout", "flat")
+    files = require_manifest_flat_file_list(manifest, path, "files")
+    if set(files) != names:
+        missing = names - set(files)
+        extra = set(files) - names
+        details = []
+        if missing:
+            details.append(f"missing {sorted(missing)}")
+        if extra:
+            details.append(f"unknown {sorted(extra)}")
+        fail(f"{path.name} manifest field 'files' must match archive files: {', '.join(details)}")
+
+    entrypoints = require_manifest_entrypoints(manifest, path)
+    lua_modules = require_manifest_lua_modules(manifest, path, platform)
+    missing_required_files = ({entry_library, *lua_modules, MANIFEST_NAME} - regular_files)
+    if missing_required_files:
+        fail(
+            f"{path.name} is missing required regular files: "
+            f"{', '.join(sorted(missing_required_files))}"
+        )
 
     return {
         "fileName": path.name,
@@ -225,10 +345,11 @@ def runtime_archive_entry(path: pathlib.Path) -> dict:
         "platform": platform,
         "architecture": architecture,
         "buildType": build_type,
-        "layout": layout,
+        "layout": "flat",
         "entryLibrary": entry_library,
-        "entrypoints": require_manifest_list(manifest, path, "entrypoints"),
-        "luaModules": require_manifest_list(manifest, path, "luaModules"),
+        "entrypoints": entrypoints,
+        "luaModules": lua_modules,
+        "files": files,
         "size": path.stat().st_size,
         "sha256": sha256_file(path),
     }

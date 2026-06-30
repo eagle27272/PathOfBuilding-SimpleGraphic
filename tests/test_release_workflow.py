@@ -238,7 +238,8 @@ def test_release_workflow_preserves_legacy_archive_and_notifies_consumers() -> N
     assert "SimpleGraphicDLLs-x64-windows.tar" in source
     assert "SimpleGraphicDLLs-x64-windows.tar" in validator_source
     assert 'grep -E \'(^|/)[^/]+\\.dll$\'' in validator_source
-    assert "PathOfBuildingCommunity" not in source
+    old_owner = "PathOfBuilding" + "Community"
+    assert old_owner not in source
     assert "repository: eagle27272/PathOfBuilding" in source
     assert "repository: eagle27272/PathOfBuilding-PoE2" in source
     assert "event-type: update-simple-graphic" in source

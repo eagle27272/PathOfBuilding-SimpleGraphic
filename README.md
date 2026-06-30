@@ -83,13 +83,14 @@ root directory. It contains `SimpleGraphicRuntime.json`, the native
 SimpleGraphic shared library (`SimpleGraphic.dll`, `libSimpleGraphic.dylib`, or
 `libSimpleGraphic.so` for the supported release platforms), the Lua C modules
 (`lcurl`, `socket`, `lua-utf8`, `lzip`), and shared runtime dependencies. The
-metadata file records the target, entry library, flat layout, and the exported
-entry points that native launchers load. For future platforms outside the
-current release matrix, the verifier uses the manifest entry library and module
-names instead of assuming a new platform has Linux naming rules. The package
-script validates the archive metadata, required Lua modules, the SimpleGraphic
-entry exports, every bundled native binary's architecture, and the native loader
-paths needed for the archive to remain relocatable after it is installed into a
+metadata file records the target, entry library, flat layout, exported entry
+points, Lua modules, and the full flat file list owned by the SimpleGraphic
+payload. For future platforms outside the current release matrix, the verifier
+uses the manifest entry library and module names instead of assuming a new
+platform has Linux naming rules. The package script validates the archive
+metadata, file ownership list, required Lua modules, the SimpleGraphic entry
+exports, every bundled native binary's architecture, and the native loader paths
+needed for the archive to remain relocatable after it is installed into a
 PathOfBuilding-PoE2 runtime directory. It also rejects macOS metadata sidecar
 files and missing bundled library dependencies with:
 
@@ -132,8 +133,10 @@ A short guide on building and debugging the shared library is available in
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
 The CMake install step deploys only native runtime-loadable files to a flat
-installation directory. This layout is consumed directly by PathOfBuilding-PoE2's
-native runtime packager.
+installation directory. The release package script clears that install directory
+before each install so stale files cannot be captured in the runtime manifest or
+archive. This layout is consumed directly by PathOfBuilding-PoE2's native runtime
+packager.
 
 On non-macOS POSIX platforms, URL opening defaults to `xdg-open`. Set
 `SIMPLEGRAPHIC_OPEN_URL_COMMAND` to the executable name or path for platforms

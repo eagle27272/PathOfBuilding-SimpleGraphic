@@ -237,28 +237,51 @@ write_runtime_manifest() {
         die "runtime install tree must be flat: $install_dir"
     fi
 
-    cat > "$install_dir/SimpleGraphicRuntime.json" <<EOF
-{
-  "schemaVersion": 1,
-  "name": "SimpleGraphic",
-  "target": "$runtime_target",
-  "platform": "$runtime_platform",
-  "architecture": "$runtime_architecture",
-  "buildType": "$build_type",
-  "layout": "flat",
-  "entryLibrary": "$runtime_entry_library",
-  "entrypoints": [
-    "RunLuaFileAsWin",
-    "RunLuaFileAsConsole"
-  ],
-  "luaModules": [
-    "$runtime_lcurl_module",
-    "$runtime_lua_utf8_module",
-    "$runtime_socket_module",
-    "$runtime_lzip_module"
-  ]
+    SIMPLEGRAPHIC_MANIFEST_TARGET="$runtime_target" \
+    SIMPLEGRAPHIC_MANIFEST_PLATFORM="$runtime_platform" \
+    SIMPLEGRAPHIC_MANIFEST_ARCHITECTURE="$runtime_architecture" \
+    SIMPLEGRAPHIC_MANIFEST_BUILD_TYPE="$build_type" \
+    SIMPLEGRAPHIC_MANIFEST_ENTRY_LIBRARY="$runtime_entry_library" \
+    SIMPLEGRAPHIC_MANIFEST_LCURL_MODULE="$runtime_lcurl_module" \
+    SIMPLEGRAPHIC_MANIFEST_LUA_UTF8_MODULE="$runtime_lua_utf8_module" \
+    SIMPLEGRAPHIC_MANIFEST_SOCKET_MODULE="$runtime_socket_module" \
+    SIMPLEGRAPHIC_MANIFEST_LZIP_MODULE="$runtime_lzip_module" \
+    "$python_cmd" - "$install_dir/SimpleGraphicRuntime.json" "$install_dir" <<'PY'
+import json
+import os
+import pathlib
+import sys
+
+manifest_path = pathlib.Path(sys.argv[1])
+install_dir = pathlib.Path(sys.argv[2])
+manifest_name = manifest_path.name
+files = sorted(path.name for path in install_dir.iterdir() if path.is_file())
+if manifest_name not in files:
+    files.append(manifest_name)
+files = sorted(set(files))
+manifest = {
+    "schemaVersion": 1,
+    "name": "SimpleGraphic",
+    "target": os.environ["SIMPLEGRAPHIC_MANIFEST_TARGET"],
+    "platform": os.environ["SIMPLEGRAPHIC_MANIFEST_PLATFORM"],
+    "architecture": os.environ["SIMPLEGRAPHIC_MANIFEST_ARCHITECTURE"],
+    "buildType": os.environ["SIMPLEGRAPHIC_MANIFEST_BUILD_TYPE"],
+    "layout": "flat",
+    "entryLibrary": os.environ["SIMPLEGRAPHIC_MANIFEST_ENTRY_LIBRARY"],
+    "entrypoints": [
+        "RunLuaFileAsWin",
+        "RunLuaFileAsConsole",
+    ],
+    "luaModules": [
+        os.environ["SIMPLEGRAPHIC_MANIFEST_LCURL_MODULE"],
+        os.environ["SIMPLEGRAPHIC_MANIFEST_LUA_UTF8_MODULE"],
+        os.environ["SIMPLEGRAPHIC_MANIFEST_SOCKET_MODULE"],
+        os.environ["SIMPLEGRAPHIC_MANIFEST_LZIP_MODULE"],
+    ],
+    "files": files,
 }
-EOF
+manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
 }
 
 print_package_config() {

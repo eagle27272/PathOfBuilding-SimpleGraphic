@@ -28,7 +28,17 @@ if [ -n "$expected_targets_value" ]; then
 else
     expected_targets=("${default_expected_targets[@]}")
 fi
+[ "${#expected_targets[@]}" -gt 0 ] || die "expected runtime target list is empty"
 require_legacy_windows="${SIMPLEGRAPHIC_REQUIRE_LEGACY_WINDOWS_ARCHIVE:-1}"
+
+target_is_expected() {
+    local candidate="$1"
+    local expected
+    for expected in "${expected_targets[@]}"; do
+        [ "$candidate" = "$expected" ] && return 0
+    done
+    return 1
+}
 
 runtime_archive_paths=()
 for path in "$artifact_dir"/SimpleGraphicRuntime-*.tar; do
@@ -44,6 +54,18 @@ for target in "${expected_targets[@]}"; do
     esac
     path="$artifact_dir/SimpleGraphicRuntime-$target.tar"
     [ -f "$path" ] || die "missing runtime archive: $path"
+done
+
+for path in "${runtime_archive_paths[@]}"; do
+    base="$(basename -- "$path")"
+    target="${base#SimpleGraphicRuntime-}"
+    target="${target%.tar}"
+    case "$target" in
+        ''|.*|*/*|*\\*|*[!a-z0-9._-]*)
+            die "unsafe runtime archive target: $base"
+            ;;
+    esac
+    target_is_expected "$target" || die "unexpected runtime archive: $base"
 done
 
 "$repo_dir/scripts/verify-runtime-archive.py" "${runtime_archive_paths[@]}"

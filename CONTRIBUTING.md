@@ -11,7 +11,7 @@ Try to avoid paths with spaces, some of our dependencies are brittle and won't b
 
 1. Clone the repository with `git clone --recursive` to obtain the sources and the submodules for dependencies, like:
     ```powershell
-    git clone --recursive "https://github.com/PathOfBuildingCommunity/PathOfBuilding-SimpleGraphic" "PoB-SimpleGraphic"
+    git clone --recursive "https://github.com/eagle27272/PathOfBuilding-SimpleGraphic" "PoB-SimpleGraphic"
     ```
 
 2. For a release-style native runtime archive, run the package script from the
@@ -109,11 +109,15 @@ Try to avoid paths with spaces, some of our dependencies are brittle and won't b
 The install tree is intentionally flat. It contains `SimpleGraphic.dll` on
 Windows, `libSimpleGraphic.dylib` on macOS, or `libSimpleGraphic.so` on Linux,
 plus the Lua C modules (`lcurl`, `socket`, `lua-utf8`, `lzip`) and shared
-runtime dependencies needed by the native launcher. New platforms outside the
-supported release matrix should record their actual entry library and Lua module
-file names in `SimpleGraphicRuntime.json`; the verifier treats those manifest
-fields as the archive contract for unknown platform labels while keeping strict
-names for Windows, Linux, and macOS.
+runtime dependencies needed by the native launcher. The package script clears
+the install directory before installing so stale files cannot be captured in the
+manifest or archive. New platforms outside the supported release matrix should
+record their actual entry library and Lua module file names in
+`SimpleGraphicRuntime.json`; the verifier treats those manifest fields as the
+archive contract for unknown platform labels while keeping strict names for
+Windows, Linux, and macOS. The manifest also records the full flat file list
+owned by the SimpleGraphic payload so consumers can update SimpleGraphic files
+without removing native launcher files from the same target directory.
 
 To validate an archive without rebuilding it, run:
 
@@ -143,14 +147,14 @@ If the archive was cross-built for a different CPU architecture, pass
 execution to a matching CI runner.
 
 The verifier checks for safe tar paths, a flat layout, matching
-`SimpleGraphicRuntime.json` metadata, the required SimpleGraphic entry library,
-the Lua C modules expected by PathOfBuilding-PoE2, the required SimpleGraphic
-entry exports, the architecture of every bundled native binary, and relocatable
-native dependency paths. Linux archives must use `$ORIGIN` RPATH/RUNPATH entries,
-and macOS archives must use local `@loader_path`/`@rpath` style install names
-instead of build-machine absolute paths. The archive must also omit macOS
-metadata sidecar files and include every non-system library referenced by its
-native binaries.
+`SimpleGraphicRuntime.json` metadata, a file ownership list that matches the
+archive contents, the required SimpleGraphic entry library, the Lua C modules
+expected by PathOfBuilding-PoE2, the required SimpleGraphic entry exports, the
+architecture of every bundled native binary, and relocatable native dependency
+paths. Linux archives must use `$ORIGIN` RPATH/RUNPATH entries, and macOS
+archives must use local `@loader_path`/`@rpath` style install names instead of
+build-machine absolute paths. The archive must also omit macOS metadata sidecar
+files and include every non-system library referenced by its native binaries.
 
 
 ## Debugging SimpleGraphic

@@ -265,11 +265,31 @@ def make_elf_x64(exports=(), dependencies=("libdep.so",), rpath="$ORIGIN", machi
     return bytes(data)
 
 
+def write_runtime_manifest(archive_root, manifest):
+    files = sorted(
+        {path.name for path in archive_root.iterdir() if path.is_file()}
+        | {"SimpleGraphicRuntime.json"}
+    )
+    manifest = dict(manifest)
+    manifest["files"] = files
+    (archive_root / "SimpleGraphicRuntime.json").write_text(
+        json.dumps(manifest), encoding="utf-8"
+    )
+
+
 def make_runtime_archive(
-    tmp_path, exports, imports=(), extra_files=(), architecture="x64", machine=0x8664
+    tmp_path,
+    exports,
+    imports=(),
+    extra_files=(),
+    architecture="x64",
+    machine=0x8664,
+    manifest_entrypoints=None,
 ):
     archive_root = tmp_path / "archive"
     archive_root.mkdir()
+    if manifest_entrypoints is None:
+        manifest_entrypoints = REQUIRED_ENTRYPOINTS
     manifest = {
         "schemaVersion": 1,
         "name": "SimpleGraphic",
@@ -279,17 +299,15 @@ def make_runtime_archive(
         "buildType": "Release",
         "layout": "flat",
         "entryLibrary": "SimpleGraphic.dll",
-        "entrypoints": REQUIRED_ENTRYPOINTS,
+        "entrypoints": manifest_entrypoints,
         "luaModules": LUA_MODULES,
     }
-    (archive_root / "SimpleGraphicRuntime.json").write_text(
-        json.dumps(manifest), encoding="utf-8"
-    )
     (archive_root / "SimpleGraphic.dll").write_bytes(make_pe_x64(exports, imports, machine))
     for module in LUA_MODULES:
         (archive_root / module).write_bytes(make_pe_x64(machine=machine))
     for name, contents in extra_files:
         (archive_root / name).write_bytes(contents)
+    write_runtime_manifest(archive_root, manifest)
 
     archive_path = tmp_path / f"SimpleGraphicRuntime-win32-{architecture}.tar"
     with tarfile.open(archive_path, "w") as archive:
@@ -320,9 +338,6 @@ def make_macos_runtime_archive(
         "entrypoints": REQUIRED_ENTRYPOINTS,
         "luaModules": POSIX_LUA_MODULES,
     }
-    (archive_root / "SimpleGraphicRuntime.json").write_text(
-        json.dumps(manifest), encoding="utf-8"
-    )
     (archive_root / "libSimpleGraphic.dylib").write_bytes(
         make_macho_arm64(REQUIRED_ENTRYPOINTS, dependencies, rpaths, cpu_type)
     )
@@ -334,6 +349,7 @@ def make_macos_runtime_archive(
                 name = dependency.rsplit("/", 1)[-1]
                 if name != "libSimpleGraphic.dylib":
                     (archive_root / name).write_bytes(make_macho_arm64(cpu_type=cpu_type))
+    write_runtime_manifest(archive_root, manifest)
 
     archive_path = tmp_path / f"SimpleGraphicRuntime-macos-{architecture}.tar"
     with tarfile.open(archive_path, "w") as archive:
@@ -367,9 +383,6 @@ def make_linux_runtime_archive(
         "entrypoints": REQUIRED_ENTRYPOINTS,
         "luaModules": lua_modules,
     }
-    (archive_root / "SimpleGraphicRuntime.json").write_text(
-        json.dumps(manifest), encoding="utf-8"
-    )
     (archive_root / entry_library).write_bytes(
         make_elf_x64(REQUIRED_ENTRYPOINTS, dependencies, rpath, machine)
     )
@@ -381,6 +394,7 @@ def make_linux_runtime_archive(
                 (archive_root / dependency).write_bytes(
                     make_elf_x64(dependencies=(), machine=machine)
                 )
+    write_runtime_manifest(archive_root, manifest)
 
     archive_path = tmp_path / f"SimpleGraphicRuntime-{platform}-{architecture}.tar"
     with tarfile.open(archive_path, "w") as archive:
@@ -411,6 +425,36 @@ def test_verify_runtime_archive_rejects_missing_pe_entrypoint_export(tmp_path):
 
     assert result.returncode != 0
     assert "missing exports: RunLuaFileAsConsole" in result.stderr
+
+
+def test_verify_runtime_archive_rejects_extra_manifest_entrypoint(tmp_path):
+    result = run_verifier(
+        make_runtime_archive(
+            tmp_path,
+            REQUIRED_ENTRYPOINTS,
+            manifest_entrypoints=[*REQUIRED_ENTRYPOINTS, "RunExperimental"],
+        )
+    )
+
+    assert result.returncode != 0
+    assert "must list only entrypoints" in result.stderr
+
+
+def test_verify_runtime_archive_rejects_duplicate_manifest_entrypoint(tmp_path):
+    result = run_verifier(
+        make_runtime_archive(
+            tmp_path,
+            REQUIRED_ENTRYPOINTS,
+            manifest_entrypoints=[
+                "RunLuaFileAsWin",
+                "RunLuaFileAsConsole",
+                "RunLuaFileAsConsole",
+            ],
+        )
+    )
+
+    assert result.returncode != 0
+    assert "field 'entrypoints' contains duplicate entry 'RunLuaFileAsConsole'" in result.stderr
 
 
 def test_verify_runtime_archive_rejects_missing_pe_dependency(tmp_path):

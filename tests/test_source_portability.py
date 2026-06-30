@@ -118,27 +118,23 @@ def test_package_script_can_describe_future_platform_runtime_file_names() -> Non
         assert variable in source
 
     assert 'require_safe_file_name "$runtime_entry_library"' in source
-    assert '"entryLibrary": "$runtime_entry_library"' in source
-    assert '"$runtime_lcurl_module"' in source
+    assert "SIMPLEGRAPHIC_MANIFEST_ENTRY_LIBRARY" in source
+    assert '"entryLibrary": os.environ["SIMPLEGRAPHIC_MANIFEST_ENTRY_LIBRARY"]' in source
+    assert '"files": files' in source
 
 
 def test_package_script_manifest_lists_expected_lua_modules_once() -> None:
     source = (REPO_ROOT / "scripts/package-runtime.sh").read_text(encoding="utf-8")
-    match = re.search(r'"luaModules": \[\n(?P<body>.*?)\n  \]', source, re.DOTALL)
 
-    assert match is not None
-    module_lines = [
-        line.strip().rstrip(",")
-        for line in match.group("body").splitlines()
-        if line.strip()
-    ]
-
-    assert module_lines == [
-        '"$runtime_lcurl_module"',
-        '"$runtime_lua_utf8_module"',
-        '"$runtime_socket_module"',
-        '"$runtime_lzip_module"',
-    ]
+    for variable in (
+        "SIMPLEGRAPHIC_MANIFEST_LCURL_MODULE",
+        "SIMPLEGRAPHIC_MANIFEST_LUA_UTF8_MODULE",
+        "SIMPLEGRAPHIC_MANIFEST_SOCKET_MODULE",
+        "SIMPLEGRAPHIC_MANIFEST_LZIP_MODULE",
+    ):
+        assert variable in source
+    assert '"luaModules": [' in source
+    assert 'os.environ["SIMPLEGRAPHIC_MANIFEST_LCURL_MODULE"]' in source
 
 
 def test_package_script_uses_host_runnable_vcpkg_binary() -> None:
@@ -351,6 +347,12 @@ def test_package_script_writes_windows_manifest_and_legacy_archive(tmp_path) -> 
     install_dir = tmp_path / "install"
     archive_dir = tmp_path / "archives"
     vcpkg_root = tmp_path / "vcpkg"
+    install_dir.mkdir()
+    (install_dir / "stale.dll").write_text("old dll\n", encoding="utf-8")
+    (install_dir / "stale.txt").write_text("old file\n", encoding="utf-8")
+    stale_dir = install_dir / "stale-dir"
+    stale_dir.mkdir()
+    (stale_dir / "nested.txt").write_text("old nested file\n", encoding="utf-8")
     vcpkg_root.mkdir()
     _write_executable(
         vcpkg_root / "vcpkg.exe",
@@ -394,6 +396,24 @@ def test_package_script_writes_windows_manifest_and_legacy_archive(tmp_path) -> 
     _write_executable(
         bin_dir / "python3",
         "#!/bin/sh\n"
+        "if [ \"$1\" = \"-\" ]; then\n"
+        "  cat > \"$2\" <<EOF\n"
+        "{\n"
+        "  \"architecture\": \"${SIMPLEGRAPHIC_MANIFEST_ARCHITECTURE}\",\n"
+        "  \"buildType\": \"${SIMPLEGRAPHIC_MANIFEST_BUILD_TYPE}\",\n"
+        "  \"entryLibrary\": \"${SIMPLEGRAPHIC_MANIFEST_ENTRY_LIBRARY}\",\n"
+        "  \"entrypoints\": [\"RunLuaFileAsWin\", \"RunLuaFileAsConsole\"],\n"
+        "  \"files\": [\"SimpleGraphic.dll\", \"SimpleGraphicRuntime.json\", \"lcurl.dll\", \"lua-utf8.dll\", \"lua51.dll\", \"lzip.dll\", \"socket.dll\", \"zlib1.dll\"],\n"
+        "  \"layout\": \"flat\",\n"
+        "  \"luaModules\": [\"${SIMPLEGRAPHIC_MANIFEST_LCURL_MODULE}\", \"${SIMPLEGRAPHIC_MANIFEST_LUA_UTF8_MODULE}\", \"${SIMPLEGRAPHIC_MANIFEST_SOCKET_MODULE}\", \"${SIMPLEGRAPHIC_MANIFEST_LZIP_MODULE}\"],\n"
+        "  \"name\": \"SimpleGraphic\",\n"
+        "  \"platform\": \"${SIMPLEGRAPHIC_MANIFEST_PLATFORM}\",\n"
+        "  \"schemaVersion\": 1,\n"
+        "  \"target\": \"${SIMPLEGRAPHIC_MANIFEST_TARGET}\"\n"
+        "}\n"
+        "EOF\n"
+        "  exit 0\n"
+        "fi\n"
         "case \"$1\" in\n"
         "  */verify-runtime-archive.py) exit 0 ;;\n"
         "  *) exit 0 ;;\n"
@@ -424,6 +444,12 @@ def test_package_script_writes_windows_manifest_and_legacy_archive(tmp_path) -> 
     assert '"lua-utf8.dll"' in manifest
     assert '"socket.dll"' in manifest
     assert '"lzip.dll"' in manifest
+    assert '"files"' in manifest
+    assert '"zlib1.dll"' in manifest
+    assert '"lua51.dll"' in manifest
+    assert not (install_dir / "stale.dll").exists()
+    assert not (install_dir / "stale.txt").exists()
+    assert not stale_dir.exists()
     assert (archive_dir / "SimpleGraphicRuntime-win32-x64.tar").is_file()
     assert (archive_dir / "SimpleGraphicDLLs-x64-windows.tar").is_file()
     assert "SimpleGraphicRuntime-win32-x64.tar" in tar_calls
@@ -433,6 +459,7 @@ def test_package_script_writes_windows_manifest_and_legacy_archive(tmp_path) -> 
     assert "./lua-utf8.dll" in tar_calls
     assert "./socket.dll" in tar_calls
     assert "./lzip.dll" in tar_calls
+    assert "stale.dll" not in tar_calls
     assert "Wrote" in result.stdout
 
 

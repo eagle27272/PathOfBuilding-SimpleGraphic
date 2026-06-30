@@ -1067,6 +1067,49 @@ def require_lua_modules(value: object, platform: str) -> list[str]:
     return lua_modules
 
 
+def require_entrypoints(value: object) -> list[str]:
+    if not isinstance(value, list) or not all(isinstance(item, str) and item for item in value):
+        fail(f"{MANIFEST_NAME} field 'entrypoints' must be a non-empty string list")
+
+    entrypoints: list[str] = []
+    seen_entrypoints: set[str] = set()
+    for entrypoint in value:
+        if entrypoint in seen_entrypoints:
+            fail(f"{MANIFEST_NAME} field 'entrypoints' contains duplicate entry {entrypoint!r}")
+        seen_entrypoints.add(entrypoint)
+        entrypoints.append(entrypoint)
+
+    if seen_entrypoints != REQUIRED_ENTRYPOINTS or len(entrypoints) != len(REQUIRED_ENTRYPOINTS):
+        fail(f"{MANIFEST_NAME} must list only entrypoints {sorted(REQUIRED_ENTRYPOINTS)}")
+
+    return entrypoints
+
+
+def require_manifest_files(value: object, archive_names: set[str]) -> list[str]:
+    if not isinstance(value, list):
+        fail(f"{MANIFEST_NAME} field 'files' must be a list")
+
+    files: list[str] = []
+    seen_files: set[str] = set()
+    for item in value:
+        name = require_flat_file_name(item, "files")
+        if name in seen_files:
+            fail(f"{MANIFEST_NAME} field 'files' contains duplicate entry {name!r}")
+        seen_files.add(name)
+        files.append(name)
+
+    if set(files) != archive_names:
+        missing = archive_names - set(files)
+        extra = set(files) - archive_names
+        details = []
+        if missing:
+            details.append(f"missing {sorted(missing)}")
+        if extra:
+            details.append(f"unknown {sorted(extra)}")
+        fail(f"{MANIFEST_NAME} field 'files' must match archive files: {', '.join(details)}")
+    return files
+
+
 def require_binary_architecture(
     name: str, data: bytes, expected_architecture: str, manifest_architecture: str
 ) -> None:
@@ -1099,11 +1142,10 @@ def validate_manifest(archive_path: pathlib.Path) -> None:
             f"{platform_entry_library!r}, got {entry_library!r}"
         )
 
-    entrypoints = manifest.get("entrypoints")
-    if not isinstance(entrypoints, list) or not REQUIRED_ENTRYPOINTS.issubset(entrypoints):
-        fail(f"{MANIFEST_NAME} must list {sorted(REQUIRED_ENTRYPOINTS)}")
+    require_entrypoints(manifest.get("entrypoints"))
 
     lua_modules = require_lua_modules(manifest.get("luaModules"), platform)
+    require_manifest_files(manifest.get("files"), names)
 
     missing = ({entry_library, *lua_modules, MANIFEST_NAME} - names)
     if missing:
